@@ -21,18 +21,24 @@ fn main() -> Result<(), Box<std::error::Error>> {
         .unwrap();
     let mut stdout = stdout.lock();
 
-    let mut ldd = Ldd::new(&cache);
+
+    let standard_libdirs = vec![
+        OsString::from("/lib64/dyninst"),
+        OsString::from("/lib64"),
+    ];
+
+    let mut ldd = Ldd::new(&cache, &standard_libdirs);
     for i in env::args_os().skip(1).flat_map(|ref path| {
         let path: OsString = PathBuf::from(path)
             .canonicalize()
             .unwrap()
             .as_os_str()
             .into();
-//        let stderr = io::stderr();
-//        let mut stderr = stderr.lock();
-//        let _ = stderr.write_all(path.as_bytes());
-//        let _ = stderr.write_all(b":\n");
-        ldd.recurse(&path, Vec::new()).unwrap_or_else(|e| {
+        //        let stderr = io::stderr();
+        //        let mut stderr = stderr.lock();
+        //        let _ = stderr.write_all(path.as_bytes());
+        //        let _ = stderr.write_all(b":\n");
+        ldd.recurse(&path, &Vec::new()).unwrap_or_else(|e| {
             let stderr = io::stderr();
             let mut stderr = stderr.lock();
             let _ = stderr.write_all(path.as_bytes());

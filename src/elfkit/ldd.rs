@@ -35,16 +35,23 @@ where
 pub struct Ldd<'a, 'b: 'a> {
     pub visited: BTreeSet<OsString>,
     pub cache: &'a Cache<'b>,
+    pub slpath: &'a Vec<OsString>,
 }
 
 impl<'a, 'b: 'a> Ldd<'a, 'b> {
-    pub fn new(cache: &'a Cache<'b>) -> Ldd<'a, 'b> {
+    pub fn new(cache: &'a Cache<'b>, slpath: &'a Vec<OsString>) -> Ldd<'a, 'b> {
         Ldd {
             visited: BTreeSet::new(),
             cache,
+            slpath,
         }
     }
-    pub fn recurse(&mut self, path: &OsStr, mut lpaths: Vec<OsString>) -> Result<Vec<OsString>, Box<std::error::Error>> {
+    pub fn recurse(
+        &mut self,
+        path: &OsStr,
+        lpaths: &Vec<OsString>,
+    ) -> Result<Vec<OsString>, Box<std::error::Error>> {
+        let mut lpaths = lpaths.clone();
         let mut f = File::open(path)?;
         let mut elf = match Elf::from_reader(&mut f) {
             Ok(e) => e,
@@ -126,7 +133,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                     let f = joined.as_os_str();
                     if self.visited.insert(f.into()) {
                         out.push(f.into());
-                        out.append(&mut self.recurse(f.into(), lpaths.clone())?);
+                        out.append(&mut self.recurse(f.into(), &lpaths)?);
                     }
                     continue 'outer;
                 }
@@ -136,10 +143,26 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                 for val in vals {
                     if self.visited.insert(OsString::from(val)) {
                         out.push(val.into());
-                        out.append(&mut self.recurse(val, lpaths.clone())?);
+                        out.append(&mut self.recurse(val, &lpaths)?);
                     }
                 }
                 continue 'outer;
+            }
+
+
+            for lpath in self.slpath.iter() {
+                let joined = PathBuf::from(lpath).join(&dep);
+                //eprintln!("Checking {:#?}", joined);
+                if joined.exists() {
+                    //eprintln!("Found {:#?}", joined);
+
+                    let f = joined.as_os_str();
+                    if self.visited.insert(f.into()) {
+                        out.push(f.into());
+                        out.append(&mut self.recurse(f.into(), &lpaths)?);
+                    }
+                    continue 'outer;
+                }
             }
 
             return Err(format!("unable to find dependency {:#?} in {:?}", dep, lpaths).into());
