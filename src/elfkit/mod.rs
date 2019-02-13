@@ -4,6 +4,8 @@ pub mod dynamic;
 pub mod elf;
 pub mod error;
 pub mod header;
+pub mod ld_so_cache;
+pub mod ldd;
 pub mod relocation;
 pub mod section;
 pub mod segment;
