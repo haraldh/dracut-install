@@ -66,32 +66,41 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                     if dyn_entry.dhtype == elfkit::types::DynamicType::RPATH {
                         if let elfkit::dynamic::DynamicContent::String(ref name) = dyn_entry.content
                         {
-                            for n in name.0.split(|e| *e == b':') {
-                                let n = replace_slice(
-                                    &n,
-                                    b"$ORIGIN",
-                                    PathBuf::from(path).parent().unwrap().as_os_str().as_bytes(),
-                                );
-                                let rpath: OsString = OsStr::from_bytes(&n).into();
-                                //eprintln!("RPATH: {:#?} {:#?}", path, rpath);
-                                lpaths.push(rpath)
-                            }
+                            lpaths.splice(
+                                0..0,
+                                name.0.split(|e| *e == b':').map(|n| {
+                                    let n = replace_slice(
+                                        &n,
+                                        b"$ORIGIN",
+                                        PathBuf::from(path)
+                                            .parent()
+                                            .unwrap()
+                                            .as_os_str()
+                                            .as_bytes(),
+                                    );
+                                    OsString::from(OsStr::from_bytes(&n))
+                                }),
+                            );
                         }
                     }
                     if dyn_entry.dhtype == elfkit::types::DynamicType::RUNPATH {
                         if let elfkit::dynamic::DynamicContent::String(ref name) = dyn_entry.content
                         {
-                            for n in name.0.split(|e| *e == b':') {
-                                let n = replace_slice(
-                                    &n,
-                                    b"$ORIGIN",
-                                    PathBuf::from(path).parent().unwrap().as_os_str().as_bytes(),
-                                );
-                                let rpath: OsString = OsStr::from_bytes(&n).into();
-
-                                //eprintln!("RUNPATH: {:#?} {:#?}", path, rpath);
-                                lpaths.push(rpath)
-                            }
+                            lpaths.splice(
+                                0..0,
+                                name.0.split(|e| *e == b':').map(|n| {
+                                    let n = replace_slice(
+                                        &n,
+                                        b"$ORIGIN",
+                                        PathBuf::from(path)
+                                            .parent()
+                                            .unwrap()
+                                            .as_os_str()
+                                            .as_bytes(),
+                                    );
+                                    OsString::from(OsStr::from_bytes(&n))
+                                }),
+                            );
                         }
                     }
                     if dyn_entry.dhtype == elfkit::types::DynamicType::NEEDED {
