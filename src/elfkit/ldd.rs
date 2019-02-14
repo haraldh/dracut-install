@@ -72,31 +72,29 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                     if dyn_entry.dhtype == elfkit::types::DynamicType::RPATH {
                         if let elfkit::dynamic::DynamicContent::String(ref name) = dyn_entry.content
                         {
-                            for rpath in name.0.split(|e| *e == b':').map(|n| {
+                            name.0.split(|e| *e == b':').for_each(|n| {
                                 let n = replace_slice(
                                     &n,
                                     b"$ORIGIN",
                                     PathBuf::from(path).parent().unwrap().as_os_str().as_bytes(),
                                 );
-                                OsString::from(OsStr::from_bytes(&n))
-                            }) {
-                                lpaths.insert(rpath);
-                            }
+
+                                lpaths.insert(OsString::from(OsStr::from_bytes(&n)));
+                            });
                         }
                     }
                     if dyn_entry.dhtype == elfkit::types::DynamicType::RUNPATH {
                         if let elfkit::dynamic::DynamicContent::String(ref name) = dyn_entry.content
                         {
-                            for rpath in name.0.split(|e| *e == b':').map(|n| {
+                            name.0.split(|e| *e == b':').for_each(|n| {
                                 let n = replace_slice(
                                     &n,
                                     b"$ORIGIN",
                                     PathBuf::from(path).parent().unwrap().as_os_str().as_bytes(),
                                 );
-                                OsString::from(OsStr::from_bytes(&n))
-                            }) {
-                                lpaths.insert(rpath);
-                            }
+
+                                lpaths.insert(OsString::from(OsStr::from_bytes(&n)));
+                            });
                         }
                     }
                     if dyn_entry.dhtype == elfkit::types::DynamicType::NEEDED {
