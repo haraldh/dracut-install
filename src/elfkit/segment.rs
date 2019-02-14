@@ -18,13 +18,6 @@ pub struct SegmentHeader {
 }
 
 impl SegmentHeader {
-    /*    pub fn entsize(eh: &Header) -> usize {
-            match eh.ident_class {
-                types::Class::Class64 => 4 + 4 + 6 * 8,
-                types::Class::Class32 => 4 + 4 + 6 * 4,
-            }
-        }
-    */
     pub fn from_reader<R>(io: &mut R, eh: &Header) -> Result<SegmentHeader, Error>
     where
         R: Read,

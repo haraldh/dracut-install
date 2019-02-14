@@ -9,14 +9,6 @@ pub struct Strtab {
 }
 
 impl Strtab {
-    /*
-    pub fn len(&self, _: &Header) -> usize {
-        self.data.len()
-    }
-    pub fn entsize(_: &Header) -> usize {
-        1
-    }
-    */
     pub fn from_reader<R>(
         mut io: R,
         _: Option<&SectionContent>,

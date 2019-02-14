@@ -185,11 +185,3 @@ macro_rules! elf_dispatch_uclass {
     }};
 }
 
-pub fn hextab<S>(align: usize, s: S) -> String
-where
-    S: std::fmt::LowerHex,
-{
-    let s = format!("{:.align$x}", s, align = align);
-    let pad: String = vec!['0'; align - s.len()].into_iter().collect();
-    format!("\x1b[90m{}\x1b[0;m{}", pad, s)
-}

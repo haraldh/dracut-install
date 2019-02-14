@@ -1,6 +1,6 @@
 mod elfkit;
 
-use crate::elfkit::ld_so_cache::Cache;
+use crate::elfkit::ld_so_cache::LDSOCache;
 use crate::elfkit::ldd::Ldd;
 
 use std::env;
@@ -9,11 +9,12 @@ use std::io;
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
+use std::collections::BTreeSet;
 
 fn main() -> Result<(), Box<std::error::Error>> {
     let stdout = io::stdout();
     let mut str_table = Vec::<u8>::new();
-    let cache = Cache::read_ld_so_cache(&mut str_table)
+    let cache = LDSOCache::read_ld_so_cache(&mut str_table)
         .map_err(|e| {
             eprintln!("Cannot read `/etc/ld.so.conf`: {}", e);
             std::process::exit(1);
@@ -26,7 +27,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
         OsString::from("/lib64/dyninst"),
         OsString::from("/lib64"),
     ];
-
+    let mut visited = BTreeSet::<OsString>::new();
     let mut ldd = Ldd::new(&cache, &standard_libdirs);
     for i in env::args_os().skip(1).flat_map(|ref path| {
         let path: OsString = PathBuf::from(path)
@@ -38,7 +39,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
         //        let mut stderr = stderr.lock();
         //        let _ = stderr.write_all(path.as_bytes());
         //        let _ = stderr.write_all(b":\n");
-        ldd.recurse(&path, &Vec::new()).unwrap_or_else(|e| {
+        ldd.recurse(&path, &BTreeSet::new(), &mut visited ).unwrap_or_else(|e| {
             let stderr = io::stderr();
             let mut stderr = stderr.lock();
             let _ = stderr.write_all(path.as_bytes());

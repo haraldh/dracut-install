@@ -10,21 +10,23 @@ use std::os::raw::c_uint;
 use std::os::unix::ffi::OsStrExt;
 
 #[derive(Default)]
-pub struct Cache<'a>(BTreeMap<&'a OsStr, Vec<&'a OsStr>>);
+pub struct LDSOCache<'a>(BTreeMap<&'a OsStr, Vec<&'a OsStr>>);
 
 pub const CACHEMAGIC: &[u8] = b"ld.so-1.7.0";
 pub const CACHEMAGIC_NEW: &[u8] = b"glibc-ld.so.cache";
 pub const CACHE_VERSION: &[u8] = b"1.1";
 
-impl<'a> std::ops::Deref for Cache<'a> {
+impl<'a> std::ops::Deref for LDSOCache<'a> {
     type Target = BTreeMap<&'a OsStr, Vec<&'a OsStr>>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<'a> Cache<'a> {
-    pub fn read_ld_so_cache<'b: 'a>(mut string_table: &'b mut Vec<u8>) -> io::Result<Cache<'a>> {
+impl<'a> LDSOCache<'a> {
+    pub fn read_ld_so_cache<'b: 'a>(
+        mut string_table: &'b mut Vec<u8>,
+    ) -> io::Result<LDSOCache<'a>> {
         let mut file = File::open("/etc/ld.so.cache")?;
 
         let mut magic = [0u8; 12];
@@ -69,7 +71,7 @@ impl<'a> Cache<'a> {
 
         file.seek(SeekFrom::Start(entries_pos))?;
 
-        let mut cache = Cache(BTreeMap::new());
+        let mut cache = LDSOCache(BTreeMap::new());
 
         while nlibs != 0 {
             let _flags = file.read_i32::<NativeEndian>()?;

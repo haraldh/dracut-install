@@ -24,14 +24,6 @@ pub struct Dynamic {
 }
 
 impl Dynamic {
-    /*
-        pub fn entsize(eh: &Header) -> usize {
-            match eh.ident_class {
-                types::Class::Class64 => 16,
-                types::Class::Class32 => 8,
-            }
-        }
-    */
     pub fn from_reader<R>(
         mut io: R,
         linked: Option<&SectionContent>,
