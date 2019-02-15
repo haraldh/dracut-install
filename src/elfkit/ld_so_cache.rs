@@ -6,12 +6,12 @@ use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::os::unix::ffi::OsStrExt;
 use std::slice;
 
-fn read_struct<T, R: Read>(read: &mut R) -> io::Result<T> {
+fn read_struct<T, R: Read>(reader: &mut R) -> io::Result<T> {
     let num_bytes = ::std::mem::size_of::<T>();
     unsafe {
         let mut s = ::std::mem::uninitialized();
         let buffer = slice::from_raw_parts_mut(&mut s as *mut T as *mut u8, num_bytes);
-        match read.read_exact(buffer) {
+        match reader.read_exact(buffer) {
             Ok(()) => Ok(s),
             Err(e) => {
                 ::std::mem::forget(s);
@@ -21,7 +21,7 @@ fn read_struct<T, R: Read>(read: &mut R) -> io::Result<T> {
     }
 }
 
-fn read_structs<T, R: Read>(mut reader: R, num_structs: usize) -> io::Result<Vec<T>> {
+fn read_structs<T, R: Read>(reader: &mut R, num_structs: usize) -> io::Result<Vec<T>> {
     let struct_size = ::std::mem::size_of::<T>();
     let num_bytes = struct_size * num_structs;
     let mut r = Vec::<T>::with_capacity(num_structs);
@@ -33,7 +33,6 @@ fn read_structs<T, R: Read>(mut reader: R, num_structs: usize) -> io::Result<Vec
     Ok(r)
 }
 
-#[derive(Default)]
 pub struct LDSOCache<'a>(BTreeMap<&'a OsStr, Vec<&'a OsStr>>);
 
 impl<'a> std::ops::Deref for LDSOCache<'a> {
@@ -88,7 +87,7 @@ impl<'a> LDSOCache<'a> {
 
         let mut cache = LDSOCache(BTreeMap::new());
 
-        let file_entries: Vec<FileEntryNew> = read_structs(file, nlibs as usize)?;
+        let file_entries: Vec<FileEntryNew> = read_structs(&mut file, nlibs as usize)?;
 
         for file_entry in file_entries {
             let key = OsStr::from_bytes(

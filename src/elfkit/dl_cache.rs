@@ -189,7 +189,7 @@ fn bindgen_test_layout_cache_file_new() {
     );
     assert_eq!(
         ::std::mem::align_of::<CacheFileNew>(),
-        8usize,
+        4usize,
         concat!("Alignment of ", stringify!(cache_file_new))
     );
     assert_eq!(
