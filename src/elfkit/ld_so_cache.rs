@@ -54,8 +54,7 @@ impl<'a> LDSOCache<'a> {
         sysroot: &'b OsStr,
         mut string_table: &'b mut Vec<u8>,
     ) -> io::Result<LDSOCache<'a>> {
-        let mut path = PathBuf::from(sysroot);
-        path.push("/etc/ld.so.cache");
+        let path = PathBuf::from(sysroot).join("etc/ld.so.cache");
         let mut file = File::open(path)?;
         let mut buf = Vec::<u8>::new();
         file.read_to_end(&mut buf)?;
@@ -138,6 +137,7 @@ impl<'a> LDSOCache<'a> {
                     .unwrap(),
             );
             cache.0.entry(key).or_insert_with(Vec::new).push(val);
+            //eprintln!("{:?} => {:?}", key, val);
         }
 
         Ok(cache)

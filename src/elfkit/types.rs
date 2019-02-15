@@ -918,11 +918,8 @@ pub enum DynamicType {
     VERNEED = 0x6ffffffe,
     /// Number of needed versions
     VERNEEDNUM = 0x6fffffff,
-    /// Shared object to load before self
-    AUXILIARY = 0x7ffffffd,
-    /// Shared object to get values from
-    FILTER = 0x7fffffff,
 
+    PPC64_GLINK = 0x70000000,
     MIPS_RLD_VERSION = 0x70000001,
     MIPS_TIME_STAMP = 0x70000002,
     MIPS_ICHECKSUM = 0x70000003,
@@ -940,6 +937,12 @@ pub enum DynamicType {
     MIPS_HIPAGENO = 0x70000014,
     MIPS_RLD_MAP = 0x70000016,
     MIPS_RLD_MAP_REL = 0x70000035,
+    /// Shared object to load before self
+    AUXILIARY = 0x7ffffffd,
+    /// Shared object to get values from
+    FILTER = 0x7fffffff,
+
+    UNKNOWN = 0xffffffff,
 }
 
 impl Default for DynamicType {

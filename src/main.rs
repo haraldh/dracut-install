@@ -5,17 +5,17 @@ use crate::elfkit::ldd::Ldd;
 
 use std::collections::BTreeSet;
 use std::env;
+use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::io;
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
-use std::ffi::OsStr;
 
 fn main() -> Result<(), Box<std::error::Error>> {
     let stdout = io::stdout();
     let mut str_table = Vec::<u8>::new();
-    let cache = LDSOCache::read_ld_so_cache(OsStr::new("/"),&mut str_table).unwrap_or_else(|e| {
+    let cache = LDSOCache::read_ld_so_cache(OsStr::new("/"), &mut str_table).unwrap_or_else(|e| {
         eprintln!("Cannot read `/etc/ld.so.conf`: {}", e);
         std::process::exit(1);
     });

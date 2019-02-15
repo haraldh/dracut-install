@@ -217,8 +217,8 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
     }
 
     pub fn canonicalize(&mut self, path: &Path) -> io::Result<PathBuf> {
+        //Ok(PathBuf::from(path))
         //path.canonicalize()
-
         if let Some(val) = self.canon_cache.get(path.as_os_str()) {
             Ok(PathBuf::from(val))
         } else {

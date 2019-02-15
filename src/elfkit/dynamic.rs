@@ -49,7 +49,14 @@ impl Dynamic {
             let val = elf_read_uclass!(eh, io)?;
 
             match types::DynamicType::from_u64(tag) {
-                None => return Err(Error::InvalidDynamicType(tag)),
+                None => {
+                    //return Err(Error::InvalidDynamicType(tag)),
+                    // be conservative and return UNKNOWN
+                    r.push(Dynamic {
+                        dhtype: types::DynamicType::UNKNOWN,
+                        content: DynamicContent::None,
+                    });
+                }
                 Some(types::DynamicType::NULL) => {
                     r.push(Dynamic {
                         dhtype: types::DynamicType::NULL,
