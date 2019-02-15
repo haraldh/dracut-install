@@ -50,7 +50,7 @@ impl<'a> LDSOCache<'a> {
         let file = File::open("/etc/ld.so.cache")?;
         let mut file = BufReader::new(file);
 
-        let cache_file : CacheFile = read_struct(&mut file)?;
+        let cache_file: CacheFile = read_struct(&mut file)?;
 
         if cache_file.magic != *CACHEMAGIC {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
@@ -88,7 +88,7 @@ impl<'a> LDSOCache<'a> {
 
         let mut cache = LDSOCache(BTreeMap::new());
 
-        let file_entries : Vec<FileEntryNew> = read_structs(file, nlibs as usize)?;
+        let file_entries: Vec<FileEntryNew> = read_structs(file, nlibs as usize)?;
 
         for file_entry in file_entries {
             let key = OsStr::from_bytes(

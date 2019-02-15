@@ -227,7 +227,6 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                 .insert(path.as_os_str().into(), val.as_os_str().into());
             Ok(PathBuf::from(val))
         }
-
     }
 }
 

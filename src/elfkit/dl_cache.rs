@@ -3,7 +3,6 @@ pub const CACHEMAGIC_NEW: &'static [u8; 17usize] = b"glibc-ld.so.cache";
 pub const CACHE_VERSION: &'static [u8; 3usize] = b"1.1";
 //pub const CACHEMAGIC_VERSION_NEW: &'static [u8; 20usize] = b"glibc-ld.so.cache1.1";
 
-
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct FileEntry {
