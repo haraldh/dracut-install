@@ -2,8 +2,9 @@ use super::dl_cache::*;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{self, BufReader, Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
 use std::slice;
 
 fn read_struct<T, R: Read>(reader: &mut R) -> io::Result<T> {
@@ -42,113 +43,101 @@ impl<'a> std::ops::Deref for LDSOCache<'a> {
     }
 }
 
-enum FileEntries {
-    Old(usize, usize),
-    New(usize, usize, usize),
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 impl<'a> LDSOCache<'a> {
     pub fn read_ld_so_cache<'b: 'a>(
+        sysroot: &'b OsStr,
         mut string_table: &'b mut Vec<u8>,
     ) -> io::Result<LDSOCache<'a>> {
-        let file = File::open("/etc/ld.so.cache")?;
-        let mut file = BufReader::new(file);
-        let mut file_entries: FileEntries;
+        let mut path = PathBuf::from(sysroot);
+        path.push("/etc/ld.so.cache");
+        let mut file = File::open(path)?;
+        let mut buf = Vec::<u8>::new();
+        file.read_to_end(&mut buf)?;
 
-        let cache_file: CacheFile = read_struct(&mut file)?;
-
-        if cache_file.magic != *CACHEMAGIC {
-            file.seek(SeekFrom::Start(0))?;
-            let cache_file_new : CacheFileNew = read_struct(&mut file)?;
-
-            if cache_file_new.magic != *CACHEMAGIC_NEW {
+        // Only read the well defined CACHEMAGIC_NEW structure
+        let offset = match find_subsequence(&buf, CACHEMAGIC_NEW) {
+            None => {
                 return Err(io::Error::from(io::ErrorKind::InvalidData));
             }
+            Some(o) => o,
+        };
 
-            if cache_file_new.version != *CACHE_VERSION {
+        let ld_so_cache_size = buf.len();
+
+        let mut buf = io::Cursor::new(buf);
+
+        buf.seek(SeekFrom::Start(offset as u64))?;
+
+        let mut cache_file_new: CacheFileNew = read_struct(&mut buf)?;
+
+        if cache_file_new.magic != *CACHEMAGIC_NEW {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+
+        if cache_file_new.version != *CACHE_VERSION {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+
+        let entries_pos = buf.seek(SeekFrom::Current(0))?;
+        let mut byte_swap = false;
+
+        if entries_pos as usize
+            + cache_file_new.nlibs as usize * ::std::mem::size_of::<FileEntryNew>()
+            + cache_file_new.len_strings as usize
+            != ld_so_cache_size
+        {
+            // try to change the byteorder
+            cache_file_new.nlibs = cache_file_new.nlibs.swap_bytes();
+            cache_file_new.len_strings = cache_file_new.len_strings.swap_bytes();
+            if entries_pos as usize
+                + cache_file_new.nlibs as usize * ::std::mem::size_of::<FileEntryNew>()
+                + cache_file_new.len_strings as usize
+                != ld_so_cache_size
+            {
                 return Err(io::Error::from(io::ErrorKind::InvalidData));
             }
-            let entries_pos = file.seek(SeekFrom::Current(0))?;
-            file_entries = FileEntries::New(entries_pos as usize, cache_file_new.nlibs as usize, 0);
-        } else {
-            let nlibs = cache_file.nlibs;
-            let entries_pos = file.seek(SeekFrom::Current(0))?;
-
-            let offset = file.seek(SeekFrom::Start(
-                (::std::mem::size_of::<FileEntry>() as u64) * u64::from(nlibs)
-                    + ::std::mem::size_of::<CacheFile>() as u64,
-            ))? as usize;
-
-            file_entries = FileEntries::Old(entries_pos as usize, cache_file.nlibs as usize);
-
-            let cache_file_new : CacheFileNew = read_struct(&mut file)?;
-
-            if cache_file_new.magic == *CACHEMAGIC_NEW && cache_file_new.version == *CACHE_VERSION {
-                let entries_pos = file.seek(SeekFrom::Current(0))?;
-                file_entries =
-                    FileEntries::New(entries_pos as usize, cache_file_new.nlibs as usize, offset);
-            }
+            byte_swap = true;
         }
 
         let mut cache = LDSOCache(BTreeMap::new());
 
-        match file_entries {
-            FileEntries::New(entries_pos, nlibs, offset) => {
-                let offset = (file.seek(SeekFrom::Current(
-                    (::std::mem::size_of::<FileEntryNew>() as i64) * (nlibs as i64),
-                ))? - offset as u64) as u32;
+        let offset = buf.seek(SeekFrom::Current(
+            (::std::mem::size_of::<FileEntryNew>() * cache_file_new.nlibs as usize) as i64,
+        ))? as usize
+            - offset;
 
-                file.read_to_end(&mut string_table)?;
+        buf.read_to_end(&mut string_table)?;
 
-                file.seek(SeekFrom::Start(entries_pos as u64))?;
+        buf.seek(SeekFrom::Start(entries_pos as u64))?;
 
-                let file_entries: Vec<FileEntryNew> = read_structs(&mut file, nlibs as usize)?;
+        let file_entries: Vec<FileEntryNew> =
+            read_structs(&mut buf, cache_file_new.nlibs as usize)?;
 
-                for file_entry in file_entries {
-                    let key = OsStr::from_bytes(
-                        string_table[(file_entry.key - offset) as usize..]
-                            .split(|b| *b == 0u8)
-                            .next()
-                            .unwrap(),
-                    );
-                    let val = OsStr::from_bytes(
-                        string_table[(file_entry.value - offset) as usize..]
-                            .split(|b| *b == 0u8)
-                            .next()
-                            .unwrap(),
-                    );
-                    cache.0.entry(key).or_insert_with(Vec::new).push(val);
-                }
+        for mut file_entry in file_entries {
+            if byte_swap {
+                file_entry.key = file_entry.key.swap_bytes();
+                file_entry.value = file_entry.value.swap_bytes();
             }
 
-            FileEntries::Old(entries_pos, nlibs) => {
-                file.seek(SeekFrom::Start(
-                    (::std::mem::size_of::<FileEntry>() as u64) * (nlibs as u64)
-                        + entries_pos as u64,
-                ))?;
-
-                file.read_to_end(&mut string_table)?;
-
-                file.seek(SeekFrom::Start(entries_pos as u64))?;
-
-                let file_entries: Vec<FileEntry> = read_structs(&mut file, nlibs as usize)?;
-
-                for file_entry in file_entries {
-                    let key = OsStr::from_bytes(
-                        string_table[(file_entry.key) as usize..]
-                            .split(|b| *b == 0u8)
-                            .next()
-                            .unwrap(),
-                    );
-                    let val = OsStr::from_bytes(
-                        string_table[(file_entry.value) as usize..]
-                            .split(|b| *b == 0u8)
-                            .next()
-                            .unwrap(),
-                    );
-                    cache.0.entry(key).or_insert_with(Vec::new).push(val);
-                }
-            }
+            let key = OsStr::from_bytes(
+                string_table[(file_entry.key as usize - offset) as usize..]
+                    .split(|b| *b == 0u8)
+                    .next()
+                    .unwrap(),
+            );
+            let val = OsStr::from_bytes(
+                string_table[(file_entry.value as usize - offset) as usize..]
+                    .split(|b| *b == 0u8)
+                    .next()
+                    .unwrap(),
+            );
+            cache.0.entry(key).or_insert_with(Vec::new).push(val);
         }
 
         Ok(cache)
