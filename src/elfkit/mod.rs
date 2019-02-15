@@ -10,6 +10,7 @@ pub mod section;
 pub mod segment;
 pub mod strtab;
 pub mod types;
+pub mod dl_cache;
 
 pub use dynamic::{Dynamic, DynamicContent};
 pub use elf::Elf;

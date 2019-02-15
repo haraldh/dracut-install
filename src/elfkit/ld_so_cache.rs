@@ -1,20 +1,40 @@
-use byteorder::{NativeEndian, ReadBytesExt};
+use super::dl_cache::*;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io;
-use std::io::{Read, Seek, SeekFrom};
-use std::mem;
-use std::os::raw::c_int;
-use std::os::raw::c_uint;
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::os::unix::ffi::OsStrExt;
+use std::slice;
+
+fn read_struct<T, R: Read>(read: &mut R) -> io::Result<T> {
+    let num_bytes = ::std::mem::size_of::<T>();
+    unsafe {
+        let mut s = ::std::mem::uninitialized();
+        let buffer = slice::from_raw_parts_mut(&mut s as *mut T as *mut u8, num_bytes);
+        match read.read_exact(buffer) {
+            Ok(()) => Ok(s),
+            Err(e) => {
+                ::std::mem::forget(s);
+                Err(e)
+            }
+        }
+    }
+}
+
+fn read_structs<T, R: Read>(mut reader: R, num_structs: usize) -> io::Result<Vec<T>> {
+    let struct_size = ::std::mem::size_of::<T>();
+    let num_bytes = struct_size * num_structs;
+    let mut r = Vec::<T>::with_capacity(num_structs);
+    unsafe {
+        let buffer = slice::from_raw_parts_mut(r.as_mut_ptr() as *mut u8, num_bytes);
+        reader.read_exact(buffer)?;
+        r.set_len(num_structs);
+    }
+    Ok(r)
+}
 
 #[derive(Default)]
 pub struct LDSOCache<'a>(BTreeMap<&'a OsStr, Vec<&'a OsStr>>);
-
-pub const CACHEMAGIC: &[u8] = b"ld.so-1.7.0";
-pub const CACHEMAGIC_NEW: &[u8] = b"glibc-ld.so.cache";
-pub const CACHE_VERSION: &[u8] = b"1.1";
 
 impl<'a> std::ops::Deref for LDSOCache<'a> {
     type Target = BTreeMap<&'a OsStr, Vec<&'a OsStr>>;
@@ -27,45 +47,40 @@ impl<'a> LDSOCache<'a> {
     pub fn read_ld_so_cache<'b: 'a>(
         mut string_table: &'b mut Vec<u8>,
     ) -> io::Result<LDSOCache<'a>> {
-        let mut file = File::open("/etc/ld.so.cache")?;
+        let file = File::open("/etc/ld.so.cache")?;
+        let mut file = BufReader::new(file);
 
-        let mut magic = [0u8; 12];
+        let cache_file : CacheFile = read_struct(&mut file)?;
 
-        file.read_exact(&mut magic)?;
-
-        if !magic.starts_with(CACHEMAGIC) {
+        if cache_file.magic != *CACHEMAGIC {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
 
-        let nlibs = file.read_u32::<NativeEndian>()?;
+        let nlibs = cache_file.nlibs;
 
-        let cache_file_size = (mem::size_of::<c_int>() + 2 * mem::size_of::<c_uint>()) as u64;
+        //let cache_file_size = ::std::mem::size_of::<CacheFile>() as u64;
         let offset = file.seek(SeekFrom::Start(
-            cache_file_size * u64::from(nlibs) + 12 + mem::size_of::<c_uint>() as u64,
+            (::std::mem::size_of::<FileEntry>() as u64) * u64::from(nlibs)
+                + ::std::mem::size_of::<CacheFile>() as u64,
         ))?;
 
-        let mut magic = [0u8; 17];
-        file.read_exact(&mut magic)?;
-        if !magic.starts_with(CACHEMAGIC_NEW) {
+        let cache_file_new: CacheFileNew = read_struct(&mut file)?;
+
+        if cache_file_new.magic != *CACHEMAGIC_NEW {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
 
-        let mut version = [0u8; 3];
-        file.read_exact(&mut version)?;
-        if !version.starts_with(CACHE_VERSION) {
+        if cache_file_new.version != *CACHE_VERSION {
             return Err(io::Error::from(io::ErrorKind::InvalidData));
         }
 
-        let mut nlibs = file.read_u32::<NativeEndian>()?;
-        let _len_strings = file.read_u32::<NativeEndian>()?;
-        for _ in 0..5 {
-            let _ = file.read_u32::<NativeEndian>()?;
-        }
+        let nlibs = cache_file_new.nlibs;
 
         let entries_pos = file.seek(SeekFrom::Current(0))?;
 
-        let cache_file_size_new = (mem::size_of::<u32>() * 4 + mem::size_of::<u64>()) as i64;
-        let offset = file.seek(SeekFrom::Current(cache_file_size_new * i64::from(nlibs)))? - offset;
+        let offset = (file.seek(SeekFrom::Current(
+            (::std::mem::size_of::<FileEntryNew>() as i64) * i64::from(nlibs),
+        ))? - offset) as u32;
 
         file.read_to_end(&mut string_table)?;
 
@@ -73,28 +88,22 @@ impl<'a> LDSOCache<'a> {
 
         let mut cache = LDSOCache(BTreeMap::new());
 
-        while nlibs != 0 {
-            let _flags = file.read_i32::<NativeEndian>()?;
-            let key = u64::from(file.read_u32::<NativeEndian>()?) - offset;
-            let value = u64::from(file.read_u32::<NativeEndian>()?) - offset;
-            let _osversion = file.read_u32::<NativeEndian>()?;
-            let _hwcap = file.read_u64::<NativeEndian>()?;
+        let file_entries : Vec<FileEntryNew> = read_structs(file, nlibs as usize)?;
+
+        for file_entry in file_entries {
             let key = OsStr::from_bytes(
-                string_table[key as usize..]
+                string_table[(file_entry.key - offset) as usize..]
                     .split(|b| *b == 0u8)
                     .next()
                     .unwrap(),
             );
             let val = OsStr::from_bytes(
-                string_table[value as usize..]
+                string_table[(file_entry.value - offset) as usize..]
                     .split(|b| *b == 0u8)
                     .next()
                     .unwrap(),
             );
-
             cache.0.entry(key).or_insert_with(Vec::new).push(val);
-
-            nlibs -= 1;
         }
 
         Ok(cache)
