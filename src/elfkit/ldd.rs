@@ -1,8 +1,10 @@
 use crate::elfkit::{self, ld_so_cache::LDSOCache, Elf};
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fs::File;
+use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
@@ -35,6 +37,7 @@ where
 pub struct Ldd<'a, 'b: 'a> {
     pub ld_so_cache: &'a LDSOCache<'b>,
     pub default_libdir: &'a [OsString],
+    pub canon_cache: BTreeMap<OsString, OsString>,
 }
 
 impl<'a, 'b: 'a> Ldd<'a, 'b> {
@@ -42,6 +45,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
         Ldd {
             ld_so_cache,
             default_libdir: slpath,
+            canon_cache: BTreeMap::new(),
         }
     }
     pub fn recurse(
@@ -124,7 +128,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                             .ok_or_else(|| {
                                 ::std::io::Error::from(::std::io::ErrorKind::InvalidData)
                             })
-                            .and_then(Path::canonicalize)
+                            .and_then(|p| self.canonicalize(p))
                             .and_then(|v| {
                                 let v = v.join(joined.file_name().unwrap());
                                 let t = v.as_os_str();
@@ -154,7 +158,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                             .ok_or_else(|| {
                                 ::std::io::Error::from(::std::io::ErrorKind::InvalidData)
                             })
-                            .and_then(Path::canonicalize)
+                            .and_then(|p| self.canonicalize(p))
                             .and_then(|v| {
                                 let v = v.join(joined.file_name().unwrap());
                                 let t = v.as_os_str();
@@ -186,7 +190,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                             .ok_or_else(|| {
                                 ::std::io::Error::from(::std::io::ErrorKind::InvalidData)
                             })
-                            .and_then(Path::canonicalize)
+                            .and_then(|p| self.canonicalize(p))
                             .and_then(|v| {
                                 let v = v.join(joined.file_name().unwrap());
                                 let t = v.as_os_str();
@@ -210,6 +214,20 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
         }
         //eprintln!("{:#?}", out);
         Ok(out)
+    }
+
+    pub fn canonicalize(&mut self, path: &Path) -> io::Result<PathBuf> {
+        //path.canonicalize()
+
+        if let Some(val) = self.canon_cache.get(path.as_os_str()) {
+            Ok(PathBuf::from(val))
+        } else {
+            let val = path.canonicalize()?;
+            self.canon_cache
+                .insert(path.as_os_str().into(), val.as_os_str().into());
+            Ok(PathBuf::from(val))
+        }
+
     }
 }
 
