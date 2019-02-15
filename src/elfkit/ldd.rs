@@ -225,7 +225,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
             let val = path.canonicalize()?;
             self.canon_cache
                 .insert(path.as_os_str().into(), val.as_os_str().into());
-            Ok(PathBuf::from(val))
+            Ok(val)
         }
     }
 }

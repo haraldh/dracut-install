@@ -1,6 +1,6 @@
-pub const CACHEMAGIC: &'static [u8; 11usize] = b"ld.so-1.7.0";
-pub const CACHEMAGIC_NEW: &'static [u8; 17usize] = b"glibc-ld.so.cache";
-pub const CACHE_VERSION: &'static [u8; 3usize] = b"1.1";
+pub const CACHEMAGIC: &[u8; 11usize] = b"ld.so-1.7.0";
+pub const CACHEMAGIC_NEW: &[u8; 17usize] = b"glibc-ld.so.cache";
+pub const CACHE_VERSION: &[u8; 3usize] = b"1.1";
 //pub const CACHEMAGIC_VERSION_NEW: &'static [u8; 20usize] = b"glibc-ld.so.cache1.1";
 
 #[repr(C)]
