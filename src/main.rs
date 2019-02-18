@@ -1,4 +1,5 @@
 mod elfkit;
+mod util;
 
 use crate::elfkit::ld_so_cache::LDSOCache;
 use crate::elfkit::ldd::Ldd;
@@ -15,8 +16,9 @@ use std::path::PathBuf;
 fn main() -> Result<(), Box<std::error::Error>> {
     let stdout = io::stdout();
     let mut str_table = Vec::<u8>::new();
-    let cache = LDSOCache::read_ld_so_cache(OsStr::new("/"), &mut str_table).unwrap_or_else(|e| {
-        eprintln!("Cannot read `/etc/ld.so.conf`: {}", e);
+    let sysroot = OsStr::new("/");
+    let cache = LDSOCache::read_ld_so_cache(sysroot, &mut str_table).unwrap_or_else(|e| {
+        eprintln!("Cannot read `ld.so.cache`: {}", e);
         std::process::exit(1);
     });
 
