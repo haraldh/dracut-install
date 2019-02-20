@@ -1,15 +1,64 @@
 use chainerror::*;
 use itertools::{EitherOrBoth, Itertools};
 use libc::ioctl;
+use libc::{fstat64, stat64};
 use std::fs::File;
 use std::{
     ffi::OsString,
     io,
     os::unix::fs::symlink,
     os::unix::io::AsRawFd,
+    os::unix::io::RawFd,
     path::{Path, PathBuf},
 };
+
 use crate::util::acl::acl_copy_fd;
+
+#[doc(hidden)]
+pub trait IsMinusOne {
+    fn is_minus_one(&self) -> bool;
+}
+
+macro_rules! impl_is_minus_one {
+    ($($t:ident)*) => ($(impl IsMinusOne for $t {
+        fn is_minus_one(&self) -> bool {
+            *self == -1
+        }
+    })*)
+}
+
+impl_is_minus_one! { i8 i16 i32 i64 isize }
+
+pub fn cvt<T: IsMinusOne>(t: T) -> io::Result<T> {
+    if t.is_minus_one() {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(t)
+    }
+}
+
+pub fn cvt_ignore_perm<T: IsMinusOne + From<i8>>(t: T, ignore_eperm: bool) -> io::Result<T> {
+    if t.is_minus_one() {
+        let e = io::Error::last_os_error();
+        if ignore_eperm {
+            if let Some(libc::EPERM) = e.raw_os_error() {
+                Ok(T::from(0i8))
+            } else {
+                Err(e)
+            }
+        } else {
+            Err(e)
+        }
+    } else {
+        Ok(t)
+    }
+}
+
+pub fn file_attr(fd: RawFd) -> io::Result<stat64> {
+    let mut stat: stat64 = unsafe { std::mem::zeroed() };
+    cvt(unsafe { fstat64(fd, &mut stat) })?;
+    Ok(stat)
+}
 
 pub fn canonicalize_dir(source: &Path) -> ChainResult<PathBuf, String> {
     let source_filename = source
@@ -80,19 +129,11 @@ pub fn clone_file(source: &Path, target: &Path) -> ChainResult<(), String> {
         .map_err(mstrerr!("Can't clone"))
 }
 
-pub fn cp(from: &Path, to: &Path) -> io::Result<u64> {
+pub fn cp(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
     use std::cmp;
     use std::fs::File;
     use std::ptr;
     use std::sync::atomic::{AtomicBool, Ordering};
-
-    fn cvt(t: i64) -> io::Result<i64> {
-        if t == -1 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(t)
-        }
-    }
 
     // Kernel prior to 4.5 don't have copy_file_range
     // We store the availability in a global to avoid unnecessary syscalls
@@ -118,20 +159,19 @@ pub fn cp(from: &Path, to: &Path) -> io::Result<u64> {
     }
 
     if !from.is_file() {
-        return Err(io::Error::new(
+        return Err(cherr!(io::Error::new(
             io::ErrorKind::InvalidInput,
             "the source path is not an existing regular file",
-        ));
+        )));
     }
 
     let umask = unsafe { libc::umask(0) };
 
-    let mut reader = File::open(from)?;
-    let mut writer = File::create(to)?;
-    let (perm, len) = {
-        let metadata = reader.metadata()?;
-        (metadata.permissions(), metadata.len())
-    };
+    let mut reader = File::open(from).map_err(minto_cherr!())?;
+    let mut writer = File::create(to).map_err(minto_cherr!())?;
+    let stat = file_attr(reader.as_raw_fd()).map_err(minto_cherr!())?;
+
+    let len = stat.st_size as u64;
 
     let has_copy_file_range = HAS_COPY_FILE_RANGE.load(Ordering::Relaxed);
     let mut written = 0u64;
@@ -176,22 +216,31 @@ pub fn cp(from: &Path, to: &Path) -> io::Result<u64> {
                         // - Files are mounted on different fs (EXDEV)
                         // - copy_file_range is disallowed, for example by seccomp (EPERM)
                         assert_eq!(written, 0);
-                        let ret = io::copy(&mut reader, &mut writer)?;
-                        writer.set_permissions(perm)?;
-                        return Ok(ret);
+                        written = io::copy(&mut reader, &mut writer).map_err(minto_cherr!())?;
+                        assert_eq!(written, len);
+                        break;
+                        //writer.set_permissions(perm).map_err(minto_cherr!())?;
+                        //return Ok(ret);
                     }
-                    _ => return Err(err),
+                    _ => return Err(into_cherr!(err)),
                 }
             }
         }
     }
-    writer.set_permissions(perm)?;
 
-    use super::acl_copy_fd;
+    let ignore_eperm = unsafe { libc::geteuid() != 0 };
+
+    cvt(unsafe { libc::fchmod(writer.as_raw_fd(), stat.st_mode) }).map_err(minto_cherr!())?;
+
+    cvt_ignore_perm(
+        unsafe { libc::fchown(writer.as_raw_fd(), stat.st_uid, stat.st_gid) },
+        ignore_eperm,
+    )
+    .map_err(minto_cherr!())?;
+
+    acl_copy_fd(reader.as_raw_fd(), writer.as_raw_fd(), ignore_eperm)?;
 
     unsafe { libc::umask(umask) };
-
-    acl_copy_fd(reader.as_raw_fd(), writer.as_raw_fd())?;
 
     Ok(written)
 }
@@ -201,6 +250,7 @@ mod test {
     use std::ffi::OsString;
     use std::fs::File;
     use std::path::PathBuf;
+
     use tempfile::TempDir;
 
     #[test]
@@ -235,9 +285,7 @@ mod test {
     #[test]
     fn test_clone() {
         use super::clone_file;
-        use std::error::Error;
-        use std::io::Read;
-        use std::io::Write;
+        use std::io::{self, Read, Write};
 
         let txt = "Test contents";
         let tmp_dir = TempDir::new().unwrap();
@@ -255,8 +303,14 @@ mod test {
             assert_eq!(String::from_utf8_lossy(&s), txt);
             Ok(())
         });
+
         if let Err(e) = res {
-            eprintln!("{:#?}", e.source());
+            if let Some(io_err) = e.find_kind_or_cause::<io::Error>() {
+                match io_err.raw_os_error() {
+                    Some(libc::EOPNOTSUPP) => {}
+                    _ => panic!("\n{}\n", e),
+                }
+            }
         }
     }
 
@@ -275,11 +329,32 @@ mod test {
             tmp_file.write_all(txt.as_bytes()).unwrap();
         }
 
-        cp(&file_path, &file_path2).unwrap();
+        match cp(&file_path, &file_path2) {
+            Ok(size) if size as usize != txt.len() => {
+                panic!("copied only {} bytes", size);
+            }
 
+            Err(e) => panic!("{:?}", e),
+            _ => {}
+        }
         let mut tmp_file2 = File::open(file_path2).unwrap();
         let mut s = Vec::new();
         tmp_file2.read_to_end(&mut s).unwrap();
         assert_eq!(String::from_utf8_lossy(&s), txt);
+    }
+
+    #[test]
+    fn test_cp_acl() {
+        use super::cp;
+
+        let file_path = PathBuf::from("/var/tmp/ping");
+        let file_path2 = PathBuf::from("/var/tmp/ping2");
+        //let tmp_dir = TempDir::new().unwrap();
+        //let file_path2 = tmp_dir.path().join("ping");
+
+        match cp(&file_path, &file_path2) {
+            Err(e) => panic!("\n{:?}\n", e),
+            _ => {}
+        }
     }
 }
