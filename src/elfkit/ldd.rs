@@ -35,13 +35,13 @@ where
 }
 
 pub struct Ldd<'a, 'b: 'a> {
-    pub ld_so_cache: &'a LDSOCache<'b>,
+    pub ld_so_cache: Option<&'a LDSOCache<'b>>,
     pub default_libdir: &'a [OsString],
     pub canon_cache: BTreeMap<OsString, OsString>,
 }
 
 impl<'a, 'b: 'a> Ldd<'a, 'b> {
-    pub fn new(ld_so_cache: &'a LDSOCache<'b>, slpath: &'a [OsString]) -> Ldd<'a, 'b> {
+    pub fn new(ld_so_cache: Option<&'a LDSOCache<'b>>, slpath: &'a [OsString]) -> Ldd<'a, 'b> {
         Ldd {
             ld_so_cache,
             default_libdir: slpath,
@@ -148,32 +148,34 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                 }
             }
 
-            if let Some(vals) = self.ld_so_cache.get(dep.as_os_str()) {
-                for f in vals {
-                    //eprintln!("LD_SO_CACHE Found {:#?}", val);
-                    if visited.insert(OsString::from(f)) {
-                        let joined = PathBuf::from(f);
-                        joined
-                            .parent()
-                            .ok_or_else(|| {
-                                ::std::io::Error::from(::std::io::ErrorKind::InvalidData)
-                            })
-                            .and_then(|p| self.canonicalize(p))
-                            .and_then(|v| {
-                                let v = v.join(joined.file_name().unwrap());
-                                let t = v.as_os_str();
-                                if t == *f || visited.insert(t.into()) {
-                                    out.push(t.into());
-                                }
-                                Ok(())
-                            })
-                            .unwrap_or_else(|_| {
-                                out.push(f.into());
-                            });
-                        out.append(&mut self.recurse(f, &lpaths, visited)?);
+            if let Some(ld_so_cache) = self.ld_so_cache {
+                if let Some(vals) = ld_so_cache.get(dep.as_os_str()) {
+                    for f in vals {
+                        //eprintln!("LD_SO_CACHE Found {:#?}", val);
+                        if visited.insert(OsString::from(f)) {
+                            let joined = PathBuf::from(f);
+                            joined
+                                .parent()
+                                .ok_or_else(|| {
+                                    ::std::io::Error::from(::std::io::ErrorKind::InvalidData)
+                                })
+                                .and_then(|p| self.canonicalize(p))
+                                .and_then(|v| {
+                                    let v = v.join(joined.file_name().unwrap());
+                                    let t = v.as_os_str();
+                                    if t == *f || visited.insert(t.into()) {
+                                        out.push(t.into());
+                                    }
+                                    Ok(())
+                                })
+                                .unwrap_or_else(|_| {
+                                    out.push(f.into());
+                                });
+                            out.append(&mut self.recurse(f, &lpaths, visited)?);
+                        }
                     }
+                    continue 'outer;
                 }
-                continue 'outer;
             }
 
             for lpath in self.default_libdir.iter() {
