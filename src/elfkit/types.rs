@@ -865,6 +865,8 @@ pub enum DynamicType {
     /// Number used
     NUM = 34,
 
+    UNKNOWN = 0x0000_ffff,
+
     /// Prelinking timestamp
     GNU_PRELINKED = 0x6ffffdf5,
     /// Size of conflict section
@@ -942,7 +944,6 @@ pub enum DynamicType {
     /// Shared object to get values from
     FILTER = 0x7fffffff,
 
-    UNKNOWN = 0xffffffff,
 }
 
 impl Default for DynamicType {
