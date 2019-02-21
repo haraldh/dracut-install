@@ -58,9 +58,7 @@ impl<'a> LDSOCache<'a> {
         }
 
         let entries_pos = buf.seek(SeekFrom::Current(0))?;
-        let mut byte_swap = false;
-
-        if entries_pos as usize
+        let byte_swap = if entries_pos as usize
             + cache_file_new.nlibs as usize * ::std::mem::size_of::<FileEntryNew>()
             + cache_file_new.len_strings as usize
             != ld_so_cache_size
@@ -75,8 +73,10 @@ impl<'a> LDSOCache<'a> {
             {
                 return Err(io::Error::from(io::ErrorKind::InvalidData));
             }
-            byte_swap = true;
-        }
+            true
+        } else {
+            false
+        };
 
         let mut cache = LDSOCache(BTreeMap::new());
 
