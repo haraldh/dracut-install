@@ -169,10 +169,16 @@ pub fn cp(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
         let fd_in = reader.as_raw_fd();
         let fd_out = writer.as_raw_fd();
 
-        cvt(unsafe { libc::ftruncate(fd_out, bytes_to_copy as i64) }).unwrap_or_else(|_| {
-            can_handle_holes = false;
-            0
-        });
+        loop {
+            match cvt(unsafe { libc::ftruncate(fd_out, bytes_to_copy) }) {
+                Ok(_) => break,
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => {
+                    can_handle_holes = false;
+                    break;
+                }
+            }
+        }
 
         let mut srcpos: i64 = 0;
 
