@@ -4,8 +4,12 @@ use libc::ioctl;
 use libc::{fstat64, stat64};
 use std::fs::File;
 use std::{
+    cmp,
     ffi::OsString,
     io,
+    io::Read,
+    io::Write,
+    mem,
     os::unix::fs::symlink,
     os::unix::io::AsRawFd,
     os::unix::io::RawFd,
@@ -130,14 +134,13 @@ pub fn clone_file(source: &Path, target: &Path) -> ChainResult<(), String> {
 }
 
 pub fn cp(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
-    use std::cmp;
     use std::fs::File;
-    use std::ptr;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     // Kernel prior to 4.5 don't have copy_file_range
     // We store the availability in a global to avoid unnecessary syscalls
     static HAS_COPY_FILE_RANGE: AtomicBool = AtomicBool::new(true);
+    static HAS_SENDFILE: AtomicBool = AtomicBool::new(true);
 
     unsafe fn copy_file_range(
         fd_in: libc::c_int,
@@ -158,6 +161,145 @@ pub fn cp(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
         )
     }
 
+    fn cp_with_holes(reader: &mut File, writer: &mut File, bytes_to_copy: i64) -> io::Result<u64> {
+        let mut has_copy_file_range = HAS_COPY_FILE_RANGE.load(Ordering::Relaxed);
+        let mut has_sendfile = HAS_SENDFILE.load(Ordering::Relaxed);
+        let mut can_handle_holes = true;
+
+        let fd_in = reader.as_raw_fd();
+        let fd_out = writer.as_raw_fd();
+
+        cvt(unsafe { libc::ftruncate(fd_out, bytes_to_copy as i64) }).unwrap_or_else(|_| {
+            can_handle_holes = false;
+            0
+        });
+
+        let mut srcpos: i64 = 0;
+
+        let mut next_beg: libc::loff_t = if can_handle_holes {
+            cvt(unsafe { libc::lseek(fd_in, srcpos, libc::SEEK_DATA) }).unwrap_or_else(|_| {
+                can_handle_holes = false;
+                0
+            })
+        } else {
+            0
+        };
+
+        let mut next_end: libc::loff_t = if can_handle_holes {
+            cvt(unsafe { libc::lseek(fd_in, next_beg, libc::SEEK_HOLE) }).unwrap_or_else(|_| {
+                can_handle_holes = false;
+                bytes_to_copy
+            })
+        } else {
+            bytes_to_copy
+        };
+
+        let mut next_len = next_end - next_beg;
+
+        while srcpos < bytes_to_copy {
+            if srcpos != 0 {
+                if can_handle_holes {
+                    next_beg = cvt(unsafe { libc::lseek(fd_in, srcpos, libc::SEEK_DATA) })?;
+                    next_end = cvt(unsafe { libc::lseek(fd_in, next_beg, libc::SEEK_HOLE) })?;
+
+                    next_len = next_end - next_beg;
+                } else {
+                    next_beg = srcpos;
+                    next_end = bytes_to_copy - srcpos;
+                }
+            }
+
+            if next_len <= 0 {
+                srcpos = next_end;
+                continue;
+            }
+
+            let num = if has_copy_file_range {
+                match cvt(unsafe {
+                    copy_file_range(
+                        fd_in,
+                        &mut next_beg,
+                        fd_out,
+                        &mut next_beg,
+                        next_len as usize,
+                        0,
+                    )
+                }) {
+                    Ok(n) => n as isize,
+                    Err(copy_err) => match copy_err.raw_os_error() {
+                        Some(libc::ENOSYS) | Some(libc::EPERM) => {
+                            HAS_COPY_FILE_RANGE.store(false, Ordering::Relaxed);
+                            has_copy_file_range = false;
+                            continue;
+                        }
+                        Some(libc::EXDEV) => {
+                            has_copy_file_range = false;
+                            continue;
+                        }
+                        _ => {
+                            return Err(copy_err);
+                        }
+                    },
+                }
+            } else if has_sendfile {
+                if can_handle_holes {
+                    if next_beg != 0 {
+                        cvt(unsafe { libc::lseek(fd_out, next_beg, libc::SEEK_SET) })?;
+                    }
+                }
+                match cvt(unsafe {
+                    libc::sendfile(fd_out, fd_in, &mut next_beg, next_len as usize)
+                }) {
+                    Ok(n) => n,
+                    Err(copy_err) => match copy_err.raw_os_error() {
+                        Some(libc::ENOSYS) => {
+                            HAS_SENDFILE.store(false, Ordering::Relaxed);
+                            has_sendfile = false;
+                            continue;
+                        }
+                        Some(libc::EINVAL) => {
+                            has_sendfile = false;
+                            continue;
+                        }
+                        _ => {
+                            return Err(copy_err);
+                        }
+                    },
+                }
+            } else {
+                if can_handle_holes {
+                    cvt(unsafe { libc::lseek(fd_in, next_beg, libc::SEEK_SET) })?;
+                    if next_beg != 0 {
+                        cvt(unsafe { libc::lseek(fd_out, next_beg, libc::SEEK_SET) })?;
+                    }
+                }
+                // const DEFAULT_BUF_SIZE: usize = ::sys_common::io::DEFAULT_BUF_SIZE;
+                const DEFAULT_BUF_SIZE: usize = 8 * 1024;
+                let mut buf = unsafe {
+                    let buf: [u8; DEFAULT_BUF_SIZE] = mem::uninitialized();
+                    buf
+                };
+
+                let mut written = 0;
+                while next_len > 0 {
+                    let slice_len = cmp::min(next_len as usize, DEFAULT_BUF_SIZE);
+                    let len = match reader.read(&mut buf[..slice_len]) {
+                        Ok(0) => return Ok(srcpos as u64 + written),
+                        Ok(len) => len,
+                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(e) => return Err(e),
+                    };
+                    writer.write_all(&buf[..len])?;
+                    written += len as u64;
+                    next_len -= len as i64;
+                }
+                written as isize
+            };
+            srcpos += num as i64;
+        }
+        Ok(srcpos as u64)
+    }
+
     if !from.is_file() {
         return Err(cherr!(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -171,62 +313,9 @@ pub fn cp(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
     let mut writer = File::create(to).map_err(minto_cherr!())?;
     let stat = file_attr(reader.as_raw_fd()).map_err(minto_cherr!())?;
 
-    let len = stat.st_size as u64;
+    let len = stat.st_size;
 
-    let has_copy_file_range = HAS_COPY_FILE_RANGE.load(Ordering::Relaxed);
-    let mut written = 0u64;
-    while written < len {
-        let copy_result = if has_copy_file_range {
-            let bytes_to_copy = cmp::min(len - written, usize::max_value() as u64) as usize;
-            let copy_result = unsafe {
-                // We actually don't have to adjust the offsets,
-                // because copy_file_range adjusts the file offset automatically
-                cvt(copy_file_range(
-                    reader.as_raw_fd(),
-                    ptr::null_mut(),
-                    writer.as_raw_fd(),
-                    ptr::null_mut(),
-                    bytes_to_copy,
-                    0,
-                ))
-            };
-            if let Err(ref copy_err) = copy_result {
-                match copy_err.raw_os_error() {
-                    Some(libc::ENOSYS) | Some(libc::EPERM) => {
-                        HAS_COPY_FILE_RANGE.store(false, Ordering::Relaxed);
-                    }
-                    _ => {}
-                }
-            }
-            copy_result
-        } else {
-            Err(io::Error::from_raw_os_error(libc::ENOSYS))
-        };
-        match copy_result {
-            Ok(ret) => written += ret as u64,
-            Err(err) => {
-                match err.raw_os_error() {
-                    Some(os_err)
-                        if os_err == libc::ENOSYS
-                            || os_err == libc::EXDEV
-                            || os_err == libc::EPERM =>
-                    {
-                        // Try fallback io::copy if either:
-                        // - Kernel version is < 4.5 (ENOSYS)
-                        // - Files are mounted on different fs (EXDEV)
-                        // - copy_file_range is disallowed, for example by seccomp (EPERM)
-                        assert_eq!(written, 0);
-                        written = io::copy(&mut reader, &mut writer).map_err(minto_cherr!())?;
-                        assert_eq!(written, len);
-                        break;
-                        //writer.set_permissions(perm).map_err(minto_cherr!())?;
-                        //return Ok(ret);
-                    }
-                    _ => return Err(into_cherr!(err)),
-                }
-            }
-        }
-    }
+    let written = cp_with_holes(&mut reader, &mut writer, len).map_err(minto_cherr!())?;
 
     let ignore_eperm = unsafe { libc::geteuid() != 0 };
 
@@ -347,14 +436,25 @@ mod test {
     fn test_cp_acl() {
         use super::cp;
 
-        let file_path = PathBuf::from("/var/tmp/ping");
-        let file_path2 = PathBuf::from("/var/tmp/ping2");
-        //let tmp_dir = TempDir::new().unwrap();
-        //let file_path2 = tmp_dir.path().join("ping");
+        cp(
+            &PathBuf::from("/usr/bin/ping"),
+            &PathBuf::from("/var/tmp/ping"),
+        )
+        .map_err(|e| panic!("\n{:?}\n", e))
+        .unwrap();
 
-        match cp(&file_path, &file_path2) {
-            Err(e) => panic!("\n{:?}\n", e),
-            _ => {}
-        }
+        cp(
+            &PathBuf::from("/var/tmp/ping"),
+            &PathBuf::from("/var/tmp/ping2"),
+        )
+        .map_err(|e| panic!("\n{:?}\n", e))
+        .unwrap();
+
+        cp(&PathBuf::from("/var/tt/ping"), &PathBuf::from("/efi/ping"))
+            .map_err(|e| panic!("\n{:?}\n", e))
+            .unwrap();
+        cp(&PathBuf::from("/efi/ping"), &PathBuf::from("/efi/ping2"))
+            .map_err(|e| panic!("\n{:?}\n", e))
+            .unwrap();
     }
 }
