@@ -1,16 +1,14 @@
 use chainerror::*;
 use libc::{fgetxattr, flistxattr, fsetxattr};
-use std::ffi::CString;
 use std::io;
 use std::os::unix::io::RawFd;
+use std::ptr;
 
-pub fn acl_copy_fd(
-    fd_in: RawFd,
-    fd_out: RawFd,
-    ignore_eperm: bool,
-) -> ChainResult<(), io::Error> {
+use super::CStrIterator;
+
+pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResult<(), io::Error> {
     let num_bytes = unsafe {
-        match flistxattr(fd_in, 0 as *mut i8, 0) {
+        match flistxattr(fd_in, ptr::null_mut(), 0) {
             t if t < 0 => {
                 let err = io::Error::last_os_error();
                 return match err.raw_os_error() {
@@ -36,20 +34,10 @@ pub fn acl_copy_fd(
         };
     };
 
-    for name in names.split(|b| *b == 0u8) {
-        if name.is_empty() {
-            continue;
-        }
-
-        let t_str = CString::new(name).unwrap();
-        let t_str_bytes_ptr = t_str.as_bytes_with_nul().as_ptr();
+    for name in CStrIterator::from_bytes(&names) {
+        let t_str_bytes_ptr = name.as_ptr();
         unsafe {
-            let num_bytes = fgetxattr(
-                fd_in,
-                t_str_bytes_ptr as *const i8,
-                0 as *mut core::ffi::c_void,
-                0,
-            );
+            let num_bytes = fgetxattr(fd_in, t_str_bytes_ptr as *const i8, ptr::null_mut(), 0);
             if num_bytes < 0 {
                 let err = io::Error::last_os_error();
                 return match err.raw_os_error() {
@@ -82,14 +70,15 @@ pub fn acl_copy_fd(
                 0,
             ) < 0
             {
-                if ignore_eperm {
-                    let io_err = io::Error::last_os_error();
-                    match io_err.raw_os_error() {
-                        Some(libc::EPERM) => {}
-                        _ => return Err(into_cherr!(io_err)),
+                let io_err = io::Error::last_os_error();
+                match io_err.raw_os_error() {
+                    Some(libc::EPERM) => {
+                        if !ignore_eperm {
+                            return Err(into_cherr!(io_err));
+                        }
                     }
-                } else {
-                    return Err(into_cherr!(io::Error::last_os_error()));
+                    Some(libc::EOPNOTSUPP) => {}
+                    _ => return Err(into_cherr!(io_err)),
                 }
             }
         }
