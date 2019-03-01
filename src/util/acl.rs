@@ -4,7 +4,7 @@ use std::io;
 use std::os::unix::io::RawFd;
 use std::ptr;
 
-use super::CStrIterator;
+use super::CStrVIterator;
 
 pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResult<(), io::Error> {
     let num_bytes = unsafe {
@@ -34,7 +34,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
         };
     };
 
-    for name in CStrIterator::from_bytes(&names) {
+    for name in CStrVIterator::from_bytes(&names) {
         let t_str_bytes_ptr = name.as_ptr();
         unsafe {
             let num_bytes = fgetxattr(fd_in, t_str_bytes_ptr as *const i8, ptr::null_mut(), 0);

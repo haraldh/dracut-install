@@ -2,7 +2,7 @@ pub mod acl;
 pub mod file;
 
 pub use acl::acl_copy_fd;
-pub use file::cp;
+pub use file::copy;
 pub use file::ln_r;
 
 use std::ffi::CStr;
@@ -36,17 +36,17 @@ pub fn read_structs<T, R: Read>(reader: &mut R, num_structs: usize) -> io::Resul
     Ok(r)
 }
 
-pub struct CStrIterator<'a> {
+pub struct CStrVIterator<'a> {
     slice: &'a [u8],
 }
 
-impl<'a> CStrIterator<'a> {
+impl<'a> CStrVIterator<'a> {
     pub fn from_bytes(slice: &'a [u8]) -> Self {
-        CStrIterator { slice }
+        CStrVIterator { slice }
     }
 }
 
-impl<'a> Iterator for CStrIterator<'a> {
+impl<'a> Iterator for CStrVIterator<'a> {
     type Item = &'a CStr;
     fn next(&mut self) -> Option<Self::Item> {
         let s = self.slice;

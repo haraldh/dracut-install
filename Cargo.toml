@@ -12,7 +12,7 @@ num-traits = "0.2.6"
 bitflags = "1.0.4"
 itertools = "0.8.0"
 #kmod = "0.3.1"
-chainerror = "0.4.2"
+chainerror = { version = "0.4.3", path = "../chainerror" }
 libc = "0.2.48"
 
 [dev-dependencies]

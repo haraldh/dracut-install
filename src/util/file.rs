@@ -1,19 +1,18 @@
 use chainerror::*;
 use itertools::{EitherOrBoth, Itertools};
-use libc::ioctl;
-use libc::{fstat64, stat64};
-use std::fs::File;
+use libc::{fstat64, ftruncate64, lseek64, stat64};
 use std::{
     cmp,
     ffi::OsString,
-    io,
-    io::Read,
-    io::Write,
-    mem,
+    fs, io,
+    io::Error,
+    io::ErrorKind,
+    mem, os,
     os::unix::fs::symlink,
     os::unix::io::AsRawFd,
     os::unix::io::RawFd,
     path::{Path, PathBuf},
+    sync,
 };
 
 use crate::util::acl::acl_copy_fd;
@@ -38,6 +37,19 @@ pub fn cvt<T: IsMinusOne>(t: T) -> io::Result<T> {
         Err(io::Error::last_os_error())
     } else {
         Ok(t)
+    }
+}
+
+pub fn cvt_r<T, F>(mut f: F) -> io::Result<T>
+where
+    T: IsMinusOne,
+    F: FnMut() -> T,
+{
+    loop {
+        match cvt(f()) {
+            Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
+            other => return other,
+        }
     }
 }
 
@@ -118,28 +130,18 @@ pub fn ln_r(source: &Path, target: &Path) -> ChainResult<(), String> {
     Ok(())
 }
 
-pub fn clone_file(source: &Path, target: &Path) -> ChainResult<(), String> {
-    unsafe fn fi_clone(fd: libc::c_int, data: libc::c_ulong) -> io::Result<()> {
-        if ioctl(fd, 0x40_04_94_09, data) != 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
-
-    let source = File::open(source).map_err(mstrerr!("Failed to open source"))?;
-    let target = File::create(target).map_err(mstrerr!("Failed to open target"))?;
-    unsafe { fi_clone(target.as_raw_fd(), source.as_raw_fd() as u64) }
-        .map_err(mstrerr!("Can't clone"))
-}
-
-pub fn cp(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
-    use std::fs::File;
-    use std::sync::atomic::{AtomicBool, Ordering};
+pub fn copy(from: &Path, to: &Path) -> ChResult!(u64, io::Error) {
+    use cmp;
+    use fs::{File, OpenOptions};
+    use io::{Read, Write};
+    use os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use sync::atomic::{AtomicBool, Ordering};
 
     // Kernel prior to 4.5 don't have copy_file_range
     // We store the availability in a global to avoid unnecessary syscalls
     static HAS_COPY_FILE_RANGE: AtomicBool = AtomicBool::new(true);
+    // Kernel prior to 2.2 don't have sendfile
+    // We store the availability in a global to avoid unnecessary syscalls
     static HAS_SENDFILE: AtomicBool = AtomicBool::new(true);
 
     unsafe fn copy_file_range(
@@ -161,183 +163,213 @@ pub fn cp(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
         )
     }
 
-    fn cp_with_holes(reader: &mut File, writer: &mut File, bytes_to_copy: i64) -> io::Result<u64> {
-        let mut has_copy_file_range = HAS_COPY_FILE_RANGE.load(Ordering::Relaxed);
-        let mut has_sendfile = HAS_SENDFILE.load(Ordering::Relaxed);
-        let mut can_handle_holes = true;
-
-        let fd_in = reader.as_raw_fd();
-        let fd_out = writer.as_raw_fd();
-
-        loop {
-            match cvt(unsafe { libc::ftruncate(fd_out, bytes_to_copy) }) {
-                Ok(_) => break,
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(_) => {
-                    can_handle_holes = false;
-                    break;
-                }
-            }
-        }
-
-        let mut srcpos: i64 = 0;
-
-        let mut next_beg: libc::loff_t = if can_handle_holes {
-            cvt(unsafe { libc::lseek(fd_in, srcpos, libc::SEEK_DATA) }).unwrap_or_else(|_| {
-                can_handle_holes = false;
-                0
-            })
-        } else {
-            0
-        };
-
-        let mut next_end: libc::loff_t = if can_handle_holes {
-            cvt(unsafe { libc::lseek(fd_in, next_beg, libc::SEEK_HOLE) }).unwrap_or_else(|_| {
-                can_handle_holes = false;
-                bytes_to_copy
-            })
-        } else {
-            bytes_to_copy
-        };
-
-        let mut next_len = next_end - next_beg;
-
-        while srcpos < bytes_to_copy {
-            if srcpos != 0 {
-                if can_handle_holes {
-                    next_beg = cvt(unsafe { libc::lseek(fd_in, srcpos, libc::SEEK_DATA) })?;
-                    next_end = cvt(unsafe { libc::lseek(fd_in, next_beg, libc::SEEK_HOLE) })?;
-
-                    next_len = next_end - next_beg;
-                } else {
-                    next_beg = srcpos;
-                    next_end = bytes_to_copy - srcpos;
-                }
-            }
-
-            if next_len <= 0 {
-                srcpos = next_end;
-                continue;
-            }
-
-            let num = if has_copy_file_range {
-                match cvt(unsafe {
-                    copy_file_range(
-                        fd_in,
-                        &mut next_beg,
-                        fd_out,
-                        &mut next_beg,
-                        next_len as usize,
-                        0,
-                    )
-                }) {
-                    Ok(n) => n as isize,
-                    Err(copy_err) => match copy_err.raw_os_error() {
-                        Some(libc::ENOSYS) | Some(libc::EPERM) => {
-                            HAS_COPY_FILE_RANGE.store(false, Ordering::Relaxed);
-                            has_copy_file_range = false;
-                            continue;
-                        }
-                        Some(libc::EXDEV) => {
-                            has_copy_file_range = false;
-                            continue;
-                        }
-                        _ => {
-                            return Err(copy_err);
-                        }
-                    },
-                }
-            } else if has_sendfile {
-                if can_handle_holes {
-                    if next_beg != 0 {
-                        cvt(unsafe { libc::lseek(fd_out, next_beg, libc::SEEK_SET) })?;
-                    }
-                }
-                match cvt(unsafe {
-                    libc::sendfile(fd_out, fd_in, &mut next_beg, next_len as usize)
-                }) {
-                    Ok(n) => n,
-                    Err(copy_err) => match copy_err.raw_os_error() {
-                        Some(libc::ENOSYS) => {
-                            HAS_SENDFILE.store(false, Ordering::Relaxed);
-                            has_sendfile = false;
-                            continue;
-                        }
-                        Some(libc::EINVAL) => {
-                            has_sendfile = false;
-                            continue;
-                        }
-                        _ => {
-                            return Err(copy_err);
-                        }
-                    },
-                }
-            } else {
-                if can_handle_holes {
-                    cvt(unsafe { libc::lseek(fd_in, next_beg, libc::SEEK_SET) })?;
-                    if next_beg != 0 {
-                        cvt(unsafe { libc::lseek(fd_out, next_beg, libc::SEEK_SET) })?;
-                    }
-                }
-                // const DEFAULT_BUF_SIZE: usize = ::sys_common::io::DEFAULT_BUF_SIZE;
-                const DEFAULT_BUF_SIZE: usize = 8 * 1024;
-                let mut buf = unsafe {
-                    let buf: [u8; DEFAULT_BUF_SIZE] = mem::uninitialized();
-                    buf
-                };
-
-                let mut written = 0;
-                while next_len > 0 {
-                    let slice_len = cmp::min(next_len as usize, DEFAULT_BUF_SIZE);
-                    let len = match reader.read(&mut buf[..slice_len]) {
-                        Ok(0) => return Ok(srcpos as u64 + written),
-                        Ok(len) => len,
-                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                        Err(e) => return Err(e),
-                    };
-                    writer.write_all(&buf[..len])?;
-                    written += len as u64;
-                    next_len -= len as i64;
-                }
-                written as isize
-            };
-            srcpos += num as i64;
-        }
-        Ok(srcpos as u64)
-    }
-
-    if !from.is_file() {
-        return Err(cherr!(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the source path is not an existing regular file",
-        )));
-    }
-
-    let umask = unsafe { libc::umask(0) };
-
     let mut reader = File::open(from).map_err(minto_cherr!())?;
-    let mut writer = File::create(to).map_err(minto_cherr!())?;
-    let stat = file_attr(reader.as_raw_fd()).map_err(minto_cherr!())?;
 
-    let len = stat.st_size;
+    let (perms, len) = {
+        let metadata = reader.metadata().map_err(minto_cherr!())?;
+        if !metadata.is_file() {
+            return Err(cherr!(Error::new(
+                ErrorKind::InvalidInput,
+                "the source path is not an existing regular file",
+            )));
+        }
+        (metadata.permissions(), metadata.len())
+    };
+    let bytes_to_copy: i64 = len as i64;
 
-    let written = cp_with_holes(&mut reader, &mut writer, len).map_err(minto_cherr!())?;
+    let mut writer = OpenOptions::new()
+        // create the new file with the correct mode
+        .mode(perms.mode())
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(to)
+        .map_err(minto_cherr!())?;
 
-    let ignore_eperm = unsafe { libc::geteuid() != 0 };
+    let mut can_handle_sparse = true;
 
-    cvt(unsafe { libc::fchmod(writer.as_raw_fd(), stat.st_mode) }).map_err(minto_cherr!())?;
+    let fd_in = reader.as_raw_fd();
+    let fd_out = writer.as_raw_fd();
 
-    cvt_ignore_perm(
-        unsafe { libc::fchown(writer.as_raw_fd(), stat.st_uid, stat.st_gid) },
-        ignore_eperm,
-    )
-    .map_err(minto_cherr!())?;
+    let writer_metadata = writer.metadata().map_err(minto_cherr!())?;
+    // prevent root from setting permissions on e.g. `/dev/null`
+    // prevent users from setting permissions on e.g. `/dev/stdout` or a named pipe
+    if writer_metadata.is_file() {
+        writer.set_permissions(perms).map_err(minto_cherr!())?;
 
-    acl_copy_fd(reader.as_raw_fd(), writer.as_raw_fd(), ignore_eperm)?;
+        let ignore_eperm = unsafe { libc::geteuid() != 0 };
 
-    unsafe { libc::umask(umask) };
+        let stat = file_attr(reader.as_raw_fd()).map_err(minto_cherr!())?;
 
-    Ok(written)
+        cvt_ignore_perm(
+            unsafe { libc::fchown(writer.as_raw_fd(), stat.st_uid, stat.st_gid) },
+            ignore_eperm,
+        )
+        .map_err(minto_cherr!())?;
+
+        acl_copy_fd(reader.as_raw_fd(), writer.as_raw_fd(), ignore_eperm)?;
+
+        match cvt_r(|| unsafe { ftruncate64(fd_out, bytes_to_copy) }) {
+            Ok(_) => {}
+            Err(err) => match err.raw_os_error() {
+                Some(libc::EINVAL) => {
+                    can_handle_sparse = false;
+                }
+                _ => {
+                    return Err(cherr!(err));
+                }
+            },
+        }
+    } else {
+        can_handle_sparse = false;
+    }
+
+    let mut use_copy_file_range = HAS_COPY_FILE_RANGE.load(Ordering::Relaxed);
+    let mut use_sendfile = HAS_SENDFILE.load(Ordering::Relaxed);
+
+    let mut srcpos: i64 = 0;
+
+    let mut next_beg: libc::loff_t = if can_handle_sparse {
+        let ret = unsafe { lseek64(fd_in, srcpos, libc::SEEK_DATA) };
+        if ret == -1 {
+            can_handle_sparse = false;
+            0
+        } else {
+            ret
+        }
+    } else {
+        0
+    };
+
+    let mut next_end: libc::loff_t = if can_handle_sparse {
+        let ret = unsafe { lseek64(fd_in, next_beg, libc::SEEK_HOLE) };
+        if ret == -1 {
+            can_handle_sparse = false;
+            bytes_to_copy
+        } else {
+            ret
+        }
+    } else {
+        bytes_to_copy
+    };
+
+    let mut next_len = next_end - next_beg;
+
+    while srcpos < bytes_to_copy {
+        if srcpos != 0 {
+            if can_handle_sparse {
+                next_beg = cvt(unsafe { lseek64(fd_in, srcpos, libc::SEEK_DATA) })
+                    .map_err(minto_cherr!())?;
+                next_end = cvt(unsafe { lseek64(fd_in, next_beg, libc::SEEK_HOLE) })
+                    .map_err(minto_cherr!())?;
+
+                next_len = next_end - next_beg;
+            } else {
+                next_beg = srcpos;
+                next_end = bytes_to_copy - srcpos;
+            }
+        }
+
+        if next_len <= 0 {
+            srcpos = next_end;
+            continue;
+        }
+
+        let num = if use_copy_file_range {
+            match cvt(unsafe {
+                copy_file_range(
+                    fd_in,
+                    &mut next_beg,
+                    fd_out,
+                    &mut next_beg,
+                    next_len as usize,
+                    0,
+                )
+            }) {
+                Ok(n) => n as isize,
+                Err(err) => match err.raw_os_error() {
+                    // Try fallback if either:
+                    // - Kernel version is < 4.5 (ENOSYS)
+                    // - Files are mounted on different fs (EXDEV)
+                    // - copy_file_range is disallowed, for example by seccomp (EPERM)
+                    Some(libc::ENOSYS) | Some(libc::EPERM) => {
+                        HAS_COPY_FILE_RANGE.store(false, Ordering::Relaxed);
+                        use_copy_file_range = false;
+                        continue;
+                    }
+                    Some(libc::EXDEV) | Some(libc::EINVAL) => {
+                        use_copy_file_range = false;
+                        continue;
+                    }
+                    _ => {
+                        return Err(cherr!(err));
+                    }
+                },
+            }
+        } else if use_sendfile {
+            if can_handle_sparse && next_beg != 0 {
+                cvt(unsafe { lseek64(fd_out, next_beg, libc::SEEK_SET) })
+                    .map_err(minto_cherr!())?;
+            }
+            match cvt(unsafe { libc::sendfile(fd_out, fd_in, &mut next_beg, next_len as usize) }) {
+                Ok(n) => n,
+                Err(err) => match err.raw_os_error() {
+                    // Try fallback if either:
+                    // - Kernel version is < 2.2 (ENOSYS)
+                    // - sendfile is disallowed, for example by seccomp (EPERM)
+                    // - can't use sendfile on source or destination (EINVAL)
+                    Some(libc::ENOSYS) | Some(libc::EPERM) => {
+                        HAS_SENDFILE.store(false, Ordering::Relaxed);
+                        use_sendfile = false;
+                        continue;
+                    }
+                    Some(libc::EINVAL) => {
+                        use_sendfile = false;
+                        continue;
+                    }
+                    _ => {
+                        return Err(cherr!(err));
+                    }
+                },
+            }
+        } else {
+            if can_handle_sparse {
+                cvt(unsafe { lseek64(fd_in, next_beg, libc::SEEK_SET) }).map_err(minto_cherr!())?;
+                if next_beg != 0 {
+                    cvt(unsafe { lseek64(fd_out, next_beg, libc::SEEK_SET) })
+                        .map_err(minto_cherr!())?;
+                }
+            }
+            //const DEFAULT_BUF_SIZE: usize = ::sys_common::io::DEFAULT_BUF_SIZE;
+            const DEFAULT_BUF_SIZE: usize = 8 * 1024;
+            let mut buf = unsafe {
+                let buf: [u8; DEFAULT_BUF_SIZE] = mem::uninitialized();
+                buf
+            };
+
+            let mut written = 0;
+            while next_len > 0 {
+                let slice_len = cmp::min(next_len as usize, DEFAULT_BUF_SIZE);
+                let len = match reader.read(&mut buf[..slice_len]) {
+                    Ok(0) => {
+                        // break early out of copy loop, because nothing is to be read anymore
+                        srcpos += written;
+                        break;
+                    }
+                    Ok(len) => len,
+                    Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(err) => return Err(cherr!(err)),
+                };
+                writer.write_all(&buf[..len]).map_err(minto_cherr!())?;
+                written += len as i64;
+                next_len -= len as i64;
+            }
+            written as isize
+        };
+        srcpos += num as i64;
+    }
+
+    Ok(srcpos as u64)
 }
 
 #[cfg(test)]
@@ -351,14 +383,24 @@ mod test {
     #[test]
     fn test_convert_abs_rel() {
         use super::{canonicalize_dir, convert_abs_rel};
+        let tmp_dir = TempDir::new().unwrap();
+        let lib64 = tmp_dir.path().join("usr").join("lib64");
+        let libexec = tmp_dir.path().join("usr").join("libexec");
+
+        ::std::fs::create_dir_all(&lib64).unwrap();
+
+        let libc_so_6 = lib64.join("libc.so.6");
+        File::create(&libc_so_6).unwrap();
+        ::std::fs::soft_link(&lib64, &tmp_dir.path().join("lib64")).unwrap();
         assert_eq!(
             convert_abs_rel(
-                &canonicalize_dir(&PathBuf::from("/lib64/libc.so.6")).unwrap(),
-                &canonicalize_dir(&PathBuf::from("/usr/libexec/libc.so")).unwrap(),
+                &canonicalize_dir(&libc_so_6).unwrap(),
+                &libexec.join("libc.so"),
             )
             .unwrap(),
             OsString::from("../lib64/libc.so.6")
         );
+
         assert_eq!(
             convert_abs_rel(
                 &PathBuf::from("/lib64/libc.so.6"),
@@ -367,6 +409,7 @@ mod test {
             .unwrap(),
             OsString::from("../lib64/libc.so.6")
         );
+
         assert_eq!(
             convert_abs_rel(
                 &PathBuf::from("/lib64/libc.so.6"),
@@ -378,40 +421,8 @@ mod test {
     }
 
     #[test]
-    fn test_clone() {
-        use super::clone_file;
-        use std::io::{self, Read, Write};
-
-        let txt = "Test contents";
-        let tmp_dir = TempDir::new().unwrap();
-        let file_path = tmp_dir.path().join("my-temporary-note.txt");
-        let file_path2 = tmp_dir.path().join("my-temporary-note2.txt");
-        {
-            let mut tmp_file = File::create(&file_path).unwrap();
-            tmp_file.write_all(txt.as_bytes()).unwrap();
-        }
-
-        let res = clone_file(&file_path, &file_path2).and_then(|_| {
-            let mut tmp_file2 = File::open(file_path2).unwrap();
-            let mut s = Vec::new();
-            tmp_file2.read_to_end(&mut s).unwrap();
-            assert_eq!(String::from_utf8_lossy(&s), txt);
-            Ok(())
-        });
-
-        if let Err(e) = res {
-            if let Some(io_err) = e.find_kind_or_cause::<io::Error>() {
-                match io_err.raw_os_error() {
-                    Some(libc::EOPNOTSUPP) => {}
-                    _ => panic!("\n{}\n", e),
-                }
-            }
-        }
-    }
-
-    #[test]
     fn test_cp() {
-        use super::cp;
+        use super::copy;
         use std::io::Read;
         use std::io::Write;
 
@@ -424,7 +435,7 @@ mod test {
             tmp_file.write_all(txt.as_bytes()).unwrap();
         }
 
-        match cp(&file_path, &file_path2) {
+        match copy(&file_path, &file_path2) {
             Ok(size) if size as usize != txt.len() => {
                 panic!("copied only {} bytes", size);
             }
@@ -439,27 +450,37 @@ mod test {
     }
 
     #[test]
-    fn test_cp_acl() {
-        use super::cp;
+    fn test_copy_null() {
+        use super::copy;
 
-        cp(
-            &PathBuf::from("/usr/bin/ping"),
-            &PathBuf::from("/var/tmp/ping"),
-        )
-        .map_err(|e| panic!("\n{:?}\n", e))
-        .unwrap();
-
-        cp(
-            &PathBuf::from("/var/tmp/ping"),
-            &PathBuf::from("/var/tmp/ping2"),
-        )
-        .map_err(|e| panic!("\n{:?}\n", e))
-        .unwrap();
-
-        cp(&PathBuf::from("/var/tt/ping"), &PathBuf::from("/efi/ping"))
+        copy(&PathBuf::from("/usr/bin/ping"), &PathBuf::from("/dev/null"))
             .map_err(|e| panic!("\n{:?}\n", e))
             .unwrap();
-        cp(&PathBuf::from("/efi/ping"), &PathBuf::from("/efi/ping2"))
+    }
+
+    #[test]
+    fn test_copy_tmp_small() {
+        use super::copy;
+        let tmp_dir = TempDir::new_in("/tmp").unwrap();
+        let dst = tmp_dir.path().join("ping");
+        copy(&PathBuf::from("/usr/bin/ping"), &dst)
+            .map_err(|e| panic!("\n{:?}\n", e))
+            .unwrap();
+    }
+
+    #[test]
+    fn test_cp_acl() {
+        use super::copy;
+
+        let tmp_dir = TempDir::new_in("/var/tmp").unwrap();
+        let dst = tmp_dir.path().join("ping");
+        let dst2 = tmp_dir.path().join("ping2");
+
+        copy(&PathBuf::from("/usr/bin/ping"), &dst)
+            .map_err(|e| panic!("\n{:?}\n", e))
+            .unwrap();
+
+        copy(&dst, &dst2)
             .map_err(|e| panic!("\n{:?}\n", e))
             .unwrap();
     }

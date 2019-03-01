@@ -943,7 +943,6 @@ pub enum DynamicType {
     AUXILIARY = 0x7ffffffd,
     /// Shared object to get values from
     FILTER = 0x7fffffff,
-
 }
 
 impl Default for DynamicType {
