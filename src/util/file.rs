@@ -377,7 +377,7 @@ mod test {
     use std::ffi::OsString;
     use std::fs::File;
     use std::path::PathBuf;
-
+    use std::os::unix::fs::symlink;
     use tempfile::TempDir;
 
     #[test]
@@ -391,7 +391,9 @@ mod test {
 
         let libc_so_6 = lib64.join("libc.so.6");
         File::create(&libc_so_6).unwrap();
-        ::std::fs::soft_link(&lib64, &tmp_dir.path().join("lib64")).unwrap();
+
+        symlink(&lib64, &tmp_dir.path().join("lib64")).unwrap();
+
         assert_eq!(
             convert_abs_rel(
                 &canonicalize_dir(&libc_so_6).unwrap(),
