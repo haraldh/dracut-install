@@ -1,2 +1,7 @@
 /target
 **/*.rs.bk
+/.idea/workspace.xml
+/Cargo.lock
+/etc
+/true.ppc32le
+
