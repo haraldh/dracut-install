@@ -17,3 +17,6 @@ libc = "0.2.48"
 
 [dev-dependencies]
 tempfile = "3.0.7"
+
+[patch.crates-io]
+chainerror = { path = "../chainerror" }
