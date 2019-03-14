@@ -1,19 +1,15 @@
+use std::cmp;
+use std::ffi::OsString;
+use std::io::{self, Error, ErrorKind};
+use std::os::unix::fs::symlink;
+use std::os::unix::io::{AsRawFd, RawFd};
+use std::path::{Path, PathBuf};
+use std::{fs, mem, os, sync};
+
 use chainerror::*;
+
 use itertools::{EitherOrBoth, Itertools};
 use libc::{fstat64, ftruncate64, lseek64, stat64};
-use std::{
-    cmp,
-    ffi::OsString,
-    fs, io,
-    io::Error,
-    io::ErrorKind,
-    mem, os,
-    os::unix::fs::symlink,
-    os::unix::io::AsRawFd,
-    os::unix::io::RawFd,
-    path::{Path, PathBuf},
-    sync,
-};
 
 use crate::util::acl::acl_copy_fd;
 
@@ -130,7 +126,7 @@ pub fn ln_r(source: &Path, target: &Path) -> ChainResult<(), String> {
     Ok(())
 }
 
-pub fn copy(from: &Path, to: &Path) -> ChResult!(u64, io::Error) {
+pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
     use cmp;
     use fs::{File, OpenOptions};
     use io::{Read, Write};
@@ -376,8 +372,9 @@ pub fn copy(from: &Path, to: &Path) -> ChResult!(u64, io::Error) {
 mod test {
     use std::ffi::OsString;
     use std::fs::File;
-    use std::path::PathBuf;
     use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
+
     use tempfile::TempDir;
 
     #[test]

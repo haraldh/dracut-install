@@ -1,4 +1,3 @@
-use crate::elfkit::{self, ld_so_cache::LDSOCache, Elf};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -7,6 +6,9 @@ use std::fs::File;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+
+use crate::elfkit::{self, ld_so_cache::LDSOCache, Elf};
 
 fn replace_slice<T: Copy>(buf: &[T], from: &[T], to: &[T]) -> Vec<T>
 where
@@ -37,7 +39,7 @@ where
 pub struct Ldd<'a, 'b: 'a> {
     pub ld_so_cache: Option<&'a LDSOCache<'b>>,
     pub default_libdir: &'a [OsString],
-    pub canon_cache: BTreeMap<OsString, OsString>,
+    pub canon_cache: Arc<RwLock<BTreeMap<OsString, OsString>>>,
 }
 
 impl<'a, 'b: 'a> Ldd<'a, 'b> {
@@ -45,14 +47,14 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
         Ldd {
             ld_so_cache,
             default_libdir: slpath,
-            canon_cache: BTreeMap::new(),
+            canon_cache: Arc::new(RwLock::new(BTreeMap::new())),
         }
     }
     pub fn recurse(
-        &mut self,
+        &self,
         path: &OsStr,
         lpaths: &BTreeSet<OsString>,
-        visited: &mut BTreeSet<OsString>,
+        visited: &Arc<RwLock<BTreeSet<OsString>>>,
     ) -> Result<Vec<OsString>, Box<std::error::Error>> {
         let mut lpaths = lpaths.clone();
         let mut f = File::open(path)?;
@@ -120,7 +122,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                 //eprintln!("Checking {:#?}", joined);
 
                 let f = joined.as_os_str();
-                if visited.insert(f.into()) {
+                if visited.write().unwrap().insert(f.into()) {
                     if joined.exists() {
                         //eprintln!("Found {:#?}", joined);
                         joined
@@ -132,7 +134,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                             .and_then(|v| {
                                 let v = v.join(joined.file_name().unwrap());
                                 let t = v.as_os_str();
-                                if t == f || visited.insert(t.into()) {
+                                if t == f || visited.write().unwrap().insert(t.into()) {
                                     out.push(t.into());
                                 }
                                 Ok(())
@@ -152,7 +154,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                 if let Some(vals) = ld_so_cache.get(dep.as_os_str()) {
                     for f in vals {
                         //eprintln!("LD_SO_CACHE Found {:#?}", val);
-                        if visited.insert(OsString::from(f)) {
+                        if visited.write().unwrap().insert(OsString::from(f)) {
                             let joined = PathBuf::from(f);
                             joined
                                 .parent()
@@ -163,7 +165,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                                 .and_then(|v| {
                                     let v = v.join(joined.file_name().unwrap());
                                     let t = v.as_os_str();
-                                    if t == *f || visited.insert(t.into()) {
+                                    if t == *f || visited.write().unwrap().insert(t.into()) {
                                         out.push(t.into());
                                     }
                                     Ok(())
@@ -184,7 +186,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                 //eprintln!("Found {:#?}", joined);
 
                 let f = joined.as_os_str();
-                if visited.insert(f.into()) {
+                if visited.write().unwrap().insert(f.into()) {
                     if joined.exists() {
                         //eprintln!("Standard LIBPATH Found {:#?}", joined);
                         joined
@@ -196,7 +198,7 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                             .and_then(|v| {
                                 let v = v.join(joined.file_name().unwrap());
                                 let t = v.as_os_str();
-                                if t == f || visited.insert(t.into()) {
+                                if t == f || visited.write().unwrap().insert(t.into()) {
                                     out.push(t.into());
                                 }
                                 Ok(())
@@ -218,17 +220,22 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
         Ok(out)
     }
 
-    pub fn canonicalize(&mut self, path: &Path) -> io::Result<PathBuf> {
+    pub fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
         //Ok(PathBuf::from(path))
         //path.canonicalize()
-        if let Some(val) = self.canon_cache.get(path.as_os_str()) {
-            Ok(PathBuf::from(val))
-        } else {
-            let val = path.canonicalize()?;
-            self.canon_cache
-                .insert(path.as_os_str().into(), val.as_os_str().into());
-            Ok(val)
+        {
+            if let Some(val) = self.canon_cache.read().unwrap().get(path.as_os_str()) {
+                return Ok(PathBuf::from(val));
+            }
         }
+        let val = path.canonicalize()?;
+        {
+            self.canon_cache
+                .write()
+                .unwrap()
+                .insert(path.as_os_str().into(), val.as_os_str().into());
+        }
+        Ok(val)
     }
 }
 
