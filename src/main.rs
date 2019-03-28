@@ -33,6 +33,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
     let /* mut */ destpath = PathBuf::from(&destrootdir);
 
     //TempDir::new_in("/var/tmp")
+    let lpaths = BTreeSet::new();
 
     for i in env::args_os()
         .skip(1)
@@ -48,7 +49,7 @@ fn main() -> Result<(), Box<std::error::Error>> {
 
             if { visited.write().unwrap().insert(path.clone()) } {
                 let mut deps = ldd
-                    .recurse(&path, &BTreeSet::new(), &visited)
+                    .recurse(&path, &lpaths, &visited)
                     .unwrap_or_else(|e| {
                         let stderr = io::stderr();
                         let mut stderr = stderr.lock();
