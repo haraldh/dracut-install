@@ -6,7 +6,7 @@ use std::fs::File;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 use crate::elfkit::{self, ld_so_cache::LDSOCache, Elf};
 
@@ -39,7 +39,7 @@ where
 pub struct Ldd<'a, 'b: 'a> {
     pub ld_so_cache: Option<&'a LDSOCache<'b>>,
     pub default_libdir: &'a [OsString],
-    pub canon_cache: Arc<RwLock<BTreeMap<OsString, OsString>>>,
+    pub canon_cache: RwLock<BTreeMap<OsString, OsString>>,
 }
 
 impl<'a, 'b: 'a> Ldd<'a, 'b> {
@@ -47,14 +47,14 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
         Ldd {
             ld_so_cache,
             default_libdir: slpath,
-            canon_cache: Arc::new(RwLock::new(BTreeMap::new())),
+            canon_cache: RwLock::new(BTreeMap::new()),
         }
     }
     pub fn recurse(
         &self,
         path: &OsStr,
         lpaths: &BTreeSet<OsString>,
-        visited: &Arc<RwLock<BTreeSet<OsString>>>,
+        visited: &RwLock<BTreeSet<OsString>>,
     ) -> Result<Vec<OsString>, Box<std::error::Error>> {
         let mut lpaths = lpaths.clone();
         let mut f = File::open(path)?;
