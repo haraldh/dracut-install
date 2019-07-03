@@ -4,7 +4,7 @@ use std::io;
 use std::os::unix::io::RawFd;
 use std::ptr;
 
-use super::CStrVIterator;
+use crate::cstrviter::CStrVIterator;
 
 pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResult<(), io::Error> {
     let num_bytes = unsafe {
@@ -12,7 +12,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
             t if t < 0 => {
                 let err = io::Error::last_os_error();
                 return match err.raw_os_error() {
-                    Some(libc::ENOATTR) | Some(libc::EOPNOTSUPP) => Ok(()),
+                    Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
                     _ => Err(into_cherr!(err)),
                 };
             }
@@ -26,7 +26,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
             t if t < 0 => {
                 let err = io::Error::last_os_error();
                 return match err.raw_os_error() {
-                    Some(libc::ENOATTR) | Some(libc::EOPNOTSUPP) => Ok(()),
+                    Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
                     _ => Err(into_cherr!(err)),
                 };
             }
@@ -41,7 +41,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
             if num_bytes < 0 {
                 let err = io::Error::last_os_error();
                 return match err.raw_os_error() {
-                    Some(libc::ENOATTR) | Some(libc::EOPNOTSUPP) => Ok(()),
+                    Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
                     _ => Err(into_cherr!(err)),
                 };
             }
@@ -55,7 +55,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
                 ret if ret < 0 => {
                     let err = io::Error::last_os_error();
                     return match err.raw_os_error() {
-                        Some(libc::ENOATTR) | Some(libc::EOPNOTSUPP) => Ok(()),
+                        Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
                         _ => Err(into_cherr!(err)),
                     };
                 }

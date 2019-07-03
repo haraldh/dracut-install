@@ -6,6 +6,21 @@
       <sourceFolder url="file://$MODULE_DIR$/examples" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/benches" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/src/file/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/file/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/file/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/src/file/benches" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/kmod/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/kmod/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/kmod/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/kmod/benches" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/kmod/kmod-sys/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/kmod/kmod-sys/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/kmod/kmod-sys/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/kmod/kmod-sys/benches" isTestSource="true" />
+      <excludeFolder url="file://$MODULE_DIR$/kmod/kmod-sys/target" />
+      <excludeFolder url="file://$MODULE_DIR$/kmod/target" />
+      <excludeFolder url="file://$MODULE_DIR$/src/file/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="sourceFolder" forTests="false" />

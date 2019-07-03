@@ -6,7 +6,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 
-use crate::util::{read_struct, read_structs};
+use crate::readstruct::*;
 
 pub struct LDSOCache<'a>(BTreeMap<&'a OsStr, Vec<&'a OsStr>>);
 

@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fs::File;
@@ -7,6 +5,11 @@ use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
+
+use hashbrown::HashMap;
+//use std::collections::BTreeMap;
+//use std::collections::BTreeSet;
+use hashbrown::HashSet;
 
 use crate::elfkit::{self, ld_so_cache::LDSOCache, Elf};
 
@@ -39,23 +42,29 @@ where
 pub struct Ldd<'a, 'b: 'a> {
     pub ld_so_cache: Option<&'a LDSOCache<'b>>,
     pub default_libdir: &'a [OsString],
-    pub canon_cache: RwLock<BTreeMap<OsString, OsString>>,
+    pub canon_cache: RwLock<HashMap<OsString, OsString>>,
+    pub dest_path: OsString,
 }
 
 impl<'a, 'b: 'a> Ldd<'a, 'b> {
-    pub fn new(ld_so_cache: Option<&'a LDSOCache<'b>>, slpath: &'a [OsString]) -> Ldd<'a, 'b> {
+    pub fn new(
+        ld_so_cache: Option<&'a LDSOCache<'b>>,
+        slpath: &'a [OsString],
+        dest_path: &PathBuf,
+    ) -> Ldd<'a, 'b> {
         Ldd {
             ld_so_cache,
             default_libdir: slpath,
-            canon_cache: RwLock::new(BTreeMap::new()),
+            canon_cache: RwLock::new(HashMap::new()),
+            dest_path: OsString::from(dest_path.as_os_str()),
         }
     }
     pub fn recurse(
         &self,
         path: &OsStr,
-        lpaths: &BTreeSet<OsString>,
-        visited: &RwLock<BTreeSet<OsString>>,
-    ) -> Result<Vec<OsString>, Box<std::error::Error>> {
+        lpaths: &HashSet<OsString>,
+        visited: &RwLock<HashSet<OsString>>,
+    ) -> Result<Vec<OsString>, Box<dyn std::error::Error>> {
         let mut lpaths = lpaths.clone();
         let mut f = File::open(path)?;
         let mut elf = match Elf::from_reader(&mut f) {
@@ -123,7 +132,10 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
 
                 let f = joined.as_os_str();
                 if visited.write().unwrap().insert(f.into()) {
-                    if joined.exists() {
+                    let mut dest = self.dest_path.clone();
+                    dest.push(joined.as_os_str());
+                    let dest = PathBuf::from(dest);
+                    if joined.exists() && !dest.exists() {
                         //eprintln!("Found {:#?}", joined);
                         joined
                             .parent()
@@ -156,24 +168,30 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                         //eprintln!("LD_SO_CACHE Found {:#?}", val);
                         if visited.write().unwrap().insert(OsString::from(f)) {
                             let joined = PathBuf::from(f);
-                            joined
-                                .parent()
-                                .ok_or_else(|| {
-                                    ::std::io::Error::from(::std::io::ErrorKind::InvalidData)
-                                })
-                                .and_then(|p| self.canonicalize(p))
-                                .and_then(|v| {
-                                    let v = v.join(joined.file_name().unwrap());
-                                    let t = v.as_os_str();
-                                    if t == *f || visited.write().unwrap().insert(t.into()) {
-                                        out.push(t.into());
-                                    }
-                                    Ok(())
-                                })
-                                .unwrap_or_else(|_| {
-                                    out.push(f.into());
-                                });
-                            out.append(&mut self.recurse(f, &lpaths, visited)?);
+                            let mut dest = self.dest_path.clone();
+                            dest.push(joined.as_os_str());
+                            let dest = PathBuf::from(dest);
+
+                            if !dest.exists() {
+                                joined
+                                    .parent()
+                                    .ok_or_else(|| {
+                                        ::std::io::Error::from(::std::io::ErrorKind::InvalidData)
+                                    })
+                                    .and_then(|p| self.canonicalize(p))
+                                    .and_then(|v| {
+                                        let v = v.join(joined.file_name().unwrap());
+                                        let t = v.as_os_str();
+                                        if t == *f || visited.write().unwrap().insert(t.into()) {
+                                            out.push(t.into());
+                                        }
+                                        Ok(())
+                                    })
+                                    .unwrap_or_else(|_| {
+                                        out.push(f.into());
+                                    });
+                                out.append(&mut self.recurse(f, &lpaths, visited)?);
+                            }
                         }
                     }
                     continue 'outer;
@@ -187,7 +205,10 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
 
                 let f = joined.as_os_str();
                 if visited.write().unwrap().insert(f.into()) {
-                    if joined.exists() {
+                    let mut dest = self.dest_path.clone();
+                    dest.push(joined.as_os_str());
+                    let dest = PathBuf::from(dest);
+                    if joined.exists() && !dest.exists() {
                         //eprintln!("Standard LIBPATH Found {:#?}", joined);
                         joined
                             .parent()

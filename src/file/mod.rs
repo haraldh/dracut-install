@@ -1,5 +1,5 @@
 use std::cmp;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Error, ErrorKind};
 use std::os::unix::fs::symlink;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -7,11 +7,10 @@ use std::path::{Path, PathBuf};
 use std::{fs, mem, os, sync};
 
 use chainerror::*;
-
 use itertools::{EitherOrBoth, Itertools};
 use libc::{fstat64, ftruncate64, lseek64, stat64};
 
-use crate::util::acl::acl_copy_fd;
+use crate::acl::acl_copy_fd;
 
 #[doc(hidden)]
 pub trait IsMinusOne {
@@ -121,13 +120,94 @@ pub fn convert_abs_rel(source: &Path, target: &Path) -> ChainResult<PathBuf, Str
 }
 
 pub fn ln_r(source: &Path, target: &Path) -> ChainResult<(), String> {
-    let target = convert_abs_rel(source, target)?;
-    symlink(source, target).map_err(mstrerr!("Can't symlink"))?;
+    let source = convert_abs_rel(source, target)?;
+    symlink(&source, &target).map_err(mstrerr!("Can't symlink {:?} to {:?}", source, target))?;
     Ok(())
 }
 
+pub fn clone_path(source: &Path, root_dir: &Path) -> ChainResult<(), Box<dyn std::error::Error>> {
+    use os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use std::fs::DirBuilder;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut target = PathBuf::from(root_dir);
+
+    if source.has_root() {
+        let source = &source.as_os_str().as_bytes()[1..];
+        target.push(OsStr::from_bytes(source));
+    } else {
+        target.push(source);
+    }
+
+    eprintln!("clone_path {:?} {:?}", source, target);
+
+    if target.symlink_metadata().is_ok() {
+        return Ok(());
+    }
+
+    match source.parent() {
+        Some(s) => clone_path(s, root_dir)?,
+        _ => return Ok(()),
+    }
+
+    let source_metadata = source.symlink_metadata().map_err(minto_cherr!())?;
+    let source_perms = source_metadata.permissions();
+    let target_parent = target.parent();
+    let target_parent_perms = target_parent
+        .and_then(|p| p.metadata().ok())
+        .map(|p| p.permissions())
+        .filter(|p| p.readonly());
+
+    if let (Some(target_parent), Some(ref tp)) = (target_parent, &target_parent_perms) {
+        let mut tp = tp.clone();
+        tp.set_readonly(false);
+        std::fs::set_permissions(target_parent, tp).map_err(minto_cherr!())?;
+    }
+
+    let ret = if source_metadata.file_type().is_symlink() {
+        let mut path = fs::read_link(source).map_err(minto_cherr!())?;
+        if !path.has_root() {
+            let mut sp = PathBuf::from(
+                source
+                    .parent()
+                    .unwrap_or_else(|| std::path::Component::RootDir.as_ref()),
+            );
+            sp.push(path);
+            path = sp;
+        }
+        clone_path(&path, root_dir)?;
+        eprintln!("clone_path symlink {:?} {:?}", path, target);
+
+        let mut target_path = PathBuf::from(root_dir);
+        if path.has_root() {
+            let path = &path.as_os_str().as_bytes()[1..];
+            target_path.push(OsStr::from_bytes(path));
+        } else {
+            target_path.push(path);
+        }
+        eprintln!("ln_r symlink {:?} {:?}", target_path, target);
+
+        ln_r(&target_path, &target).map_err(minto_cherr!())
+    } else if source.is_dir() {
+        eprintln!("clone_path mkdir {:?} {:?}", source, target);
+        let mut builder = DirBuilder::new();
+        builder.mode(source_perms.mode());
+        builder.create(&target).map_err(minto_cherr!())
+    } else if source.is_file() {
+        eprintln!("clone_path copy {:?} {:?}", source, target);
+        copy(source, &target).map(|_| ()).map_err(minto_cherr!())
+    } else {
+        unimplemented!()
+    };
+
+    if let (Some(target_parent), Some(ref tp)) = (target_parent, &target_parent_perms) {
+        std::fs::set_permissions(target_parent, tp.clone()).map_err(minto_cherr!())?;
+    }
+
+    ret
+}
+
 pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
-    use cmp;
     use fs::{File, OpenOptions};
     use io::{Read, Write};
     use os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -339,7 +419,7 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
             //const DEFAULT_BUF_SIZE: usize = ::sys_common::io::DEFAULT_BUF_SIZE;
             const DEFAULT_BUF_SIZE: usize = 8 * 1024;
             let mut buf = unsafe {
-                let buf: [u8; DEFAULT_BUF_SIZE] = mem::uninitialized();
+                let buf: [u8; DEFAULT_BUF_SIZE] = mem::MaybeUninit::uninit().assume_init();
                 buf
             };
 
