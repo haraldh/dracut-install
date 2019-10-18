@@ -1,22 +1,23 @@
 [package]
-name = "kmod2"
-version = "0.3.2"
+name = "kmod"
+version = "0.4.0"
 description = "Bindings to libkmod to manage linux kernel modules"
 authors = ["kpcyrd <git@rxv.cc>"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/kpcyrd/kmod-rs"
 categories = ["api-bindings"]
 readme = "README.md"
+edition = "2018"
 
 [badges]
 travis-ci = { repository = "kpcyrd/kmod-rs" }
 
 [dependencies]
-error-chain = "0.12"
-log = "0.4"
-errno = "0.2"
-reduce = "0.1"
-kmod-sys = { version = "0.1.2" }
+error-chain = "0.12.1"
+log = "0.4.8"
+errno = "0.2.4"
+reduce = "0.1.2"
+kmod-sys = "0.1.2"
 
 [dev-dependencies]
-env_logger = "0.6"
+env_logger = "0.7.1"
