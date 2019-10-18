@@ -2,7 +2,7 @@ use std::cmp;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Error, ErrorKind};
 use std::os::unix::fs::symlink;
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::prelude::*;
 use std::path::{Path, PathBuf};
 use std::{fs, mem, os, sync};
 
@@ -126,9 +126,8 @@ pub fn ln_r(source: &Path, target: &Path) -> ChainResult<(), String> {
 }
 
 pub fn clone_path(source: &Path, root_dir: &Path) -> ChainResult<(), Box<dyn std::error::Error>> {
-    use os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use os::unix::fs::DirBuilderExt;
     use std::fs::DirBuilder;
-    use std::os::unix::ffi::OsStrExt;
 
     let mut target = PathBuf::from(root_dir);
 
@@ -210,7 +209,6 @@ pub fn clone_path(source: &Path, root_dir: &Path) -> ChainResult<(), Box<dyn std
 pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
     use fs::{File, OpenOptions};
     use io::{Read, Write};
-    use os::unix::fs::{OpenOptionsExt, PermissionsExt};
     use sync::atomic::{AtomicBool, Ordering};
 
     // Kernel prior to 4.5 don't have copy_file_range

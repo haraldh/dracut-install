@@ -1,5 +1,5 @@
-extern crate kmod2;
-use kmod2 as kmod;
+extern crate kmod;
+
 #[macro_use]
 extern crate log;
 extern crate env_logger;

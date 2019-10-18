@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::prelude::*;
 use std::path::PathBuf;
 
 use crate::readstruct::*;

@@ -1,11 +1,13 @@
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, OsStr};
 use std::fmt;
+use std::os::unix::ffi::OsStrExt;
 
 use errno;
+use kmod_sys::{self, kmod_list, kmod_module};
+use log::trace;
 use reduce::Reduce;
 
-use errors::{ErrorKind, Result};
-use kmod_sys::{self, kmod_list, kmod_module};
+use crate::errors::{ErrorKind, Result};
 
 /// Wrapper around a kmod_module
 pub struct Module {
@@ -15,23 +17,28 @@ pub struct Module {
 impl Drop for Module {
     fn drop(&mut self) {
         trace!("dropping kmod_module: {:?}", self.inner);
-        unsafe { kmod_sys::kmod_module_unref(self.inner) };
+        let _ = unsafe { kmod_sys::kmod_module_unref(self.inner) };
     }
 }
 
 impl Module {
     #[inline]
     pub(crate) fn new(module: *mut kmod_module) -> Module {
+        assert!(!module.is_null());
         trace!("creating kmod_module: {:?}", module);
         Module { inner: module }
     }
 
     /// Get the name of the module
     #[inline]
-    pub fn name(&self) -> String {
-        let name = unsafe { kmod_sys::kmod_module_get_name(self.inner) };
-        let name = unsafe { CStr::from_ptr(name) };
-        name.to_string_lossy().into_owned()
+    pub fn name(&self) -> Option<&OsStr> {
+        unsafe {
+            kmod_sys::kmod_module_get_name(self.inner)
+                .as_ref()
+                .map(|ptr| CStr::from_ptr(ptr))
+        }
+        .map(CStr::to_bytes)
+        .map(OsStr::from_bytes)
     }
 
     /// Get the size of the module
@@ -89,24 +96,27 @@ impl Module {
         }
     }
 
-    /// Get module path
     #[inline]
-    pub fn path(&self) -> Option<String> {
-        let path = unsafe { kmod_sys::kmod_module_get_path(self.inner) };
-        if path.is_null() {
-            return None;
+    pub fn path(&self) -> Option<&OsStr> {
+        unsafe {
+            kmod_sys::kmod_module_get_path(self.inner)
+                .as_ref()
+                .map(|ptr| CStr::from_ptr(ptr))
         }
-
-        let path = unsafe { CStr::from_ptr(path) };
-        Some(path.to_string_lossy().into_owned())
+        .map(CStr::to_bytes)
+        .map(OsStr::from_bytes)
     }
 
     /// Get module options
     #[inline]
-    pub fn options(&self) -> String {
-        let options = unsafe { kmod_sys::kmod_module_get_options(self.inner) };
-        let options = unsafe { CStr::from_ptr(options) };
-        options.to_string_lossy().into_owned()
+    pub fn options(&self) -> Option<&OsStr> {
+        unsafe {
+            kmod_sys::kmod_module_get_options(self.inner)
+                .as_ref()
+                .map(|ptr| CStr::from_ptr(ptr))
+                .map(CStr::to_bytes)
+                .map(OsStr::from_bytes)
+        }
     }
 
     /// Insert the module into the kernel
@@ -140,7 +150,7 @@ impl Module {
 }
 
 impl fmt::Debug for Module {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad("Module { .. }")
     }
 }
@@ -156,7 +166,7 @@ impl Drop for ModuleIterator {
         {
             trace!("dropping kmod_list: {:?}", self.list);
         }
-        unsafe { kmod_sys::kmod_module_unref_list(self.list) };
+        let _ = unsafe { kmod_sys::kmod_module_unref_list(self.list) };
     }
 }
 
@@ -187,7 +197,7 @@ impl Iterator for ModuleIterator {
 }
 
 impl fmt::Debug for ModuleIterator {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad("ModuleIterator { .. }")
     }
 }
@@ -227,8 +237,8 @@ impl Iterator for SymbolIterator {
         }
 
         let symbol = unsafe { kmod_sys::kmod_module_dependency_symbol_get_symbol(self.iter) };
-        let newiter = unsafe { kmod_sys::kmod_list_next(self.list, self.iter) };
-        self.iter = newiter;
+        let new_iter = unsafe { kmod_sys::kmod_list_next(self.list, self.iter) };
+        self.iter = new_iter;
 
         if symbol.is_null() {
             panic!("Empty symbol");
@@ -241,7 +251,7 @@ impl Iterator for SymbolIterator {
 }
 
 impl fmt::Debug for SymbolIterator {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad("SymbolIterator { .. }")
     }
 }

@@ -1,12 +1,10 @@
 #![allow(dead_code)]
 
-use kmod2 as kmod;
 use std::ffi::OsStr;
 use std::ffi::OsString;
-use std::fs::File;
 use std::io;
-use std::io::{BufReader, Read, Write};
-use std::os::unix::ffi::OsStrExt;
+use std::io::Write;
+use std::os::unix::prelude::*;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
@@ -23,11 +21,13 @@ use regex::bytes::Regex;
 use crate::elfkit::ld_so_cache::LDSOCache;
 use crate::elfkit::ldd::Ldd;
 use crate::file::clone_path;
+pub use crate::modules::modalias_list;
 
 mod acl;
 mod cstrviter;
 mod elfkit;
 mod file;
+mod modules;
 mod readstruct;
 
 pub type ResultSend<T> = std::result::Result<T, Box<dyn std::error::Error + 'static + Send>>;
@@ -137,43 +137,6 @@ pub fn ldd(files: &[OsString], report_error: bool, dest_path: &PathBuf) -> Vec<O
         .collect::<Vec<_>>()
 }
 
-pub fn modalias_list() -> Result<HashSet<String>, Box<dyn std::error::Error>> {
-    let mut modules: HashSet<String> = HashSet::new();
-
-    let kmod_ctx = kmod::Context::new()?;
-
-    for m in kmod_ctx.modules_loaded()? {
-        modules.insert(m.name());
-
-        for k in kmod_ctx.module_new_from_lookup(&OsString::from(m.name()))? {
-            modules.insert(k.name());
-        }
-    }
-
-    for entry in WalkDir::new("/sys/devices")
-        .into_iter()
-        .filter_map(std::result::Result::<_, _>::ok)
-        .filter(|e| e.file_name().as_bytes().eq(b"modalias"))
-    {
-        let f = File::open(entry.path())?;
-        let mut br = BufReader::new(f);
-        let mut modalias = Vec::new();
-        br.read_to_end(&mut modalias)?;
-        if let Some(b'\n') = modalias.last() {
-            modalias.pop();
-        }
-        if modalias.is_empty() {
-            continue;
-        }
-        let modalias = OsStr::from_bytes(&modalias);
-
-        for m in kmod_ctx.module_new_from_lookup(modalias)? {
-            modules.insert(m.name());
-        }
-    }
-    Ok(modules)
-}
-
 pub fn install_files_ldd(
     ctx: &mut RunContext,
     files: &[OsString],
@@ -198,12 +161,11 @@ pub fn install_files(
     Ok(())
 }
 
+//noinspection RsUnresolvedReference,RsUnresolvedReference
 pub fn install_modules(
     ctx: &mut RunContext,
     module_args: &[OsString],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::os::unix::ffi::OsStringExt;
-
     let visited = RwLock::new(HashSet::<OsString>::new());
 
     let kmod_ctx = kmod::Context::new_with(ctx.kerneldir.as_ref().map(OsString::as_os_str), None)?;
@@ -213,9 +175,14 @@ pub fn install_modules(
         .flat_map(|module| {
             if module.as_bytes().starts_with(b"/") {
                 debug!(ctx.logger, "by file path");
-                let m = module.to_str().unwrap();
-                let name = kmod_ctx.module_new_from_path(m).unwrap().name();
-                return vec![kmod_ctx.module_new_from_lookup(&OsString::from(name))];
+                let m = kmod_ctx
+                    .module_new_from_path(module.to_str().unwrap())
+                    .unwrap();
+                if let Some(name) = m.name() {
+                    return vec![kmod_ctx.module_new_from_lookup(&OsString::from(name))];
+                } else {
+                    return vec![Err(kmod::ErrorKind::Errno(kmod::Errno(42)).into())];
+                }
             } else if module.as_bytes().starts_with(b"=") {
                 let (_, b) = module.as_bytes().split_at(1);
 
@@ -239,9 +206,11 @@ pub fn install_modules(
                         kmod_ctx
                             .module_new_from_path(e.path().to_str().unwrap())
                             .and_then(|m| {
-                                let name = m.name();
-                                kmod_ctx.module_new_from_lookup(&OsString::from(name))
+                                m.name()
+                                    .ok_or_else(|| kmod::ErrorKind::Errno(kmod::Errno(42)).into())
+                                    .map(OsString::from)
                             })
+                            .and_then(|name| kmod_ctx.module_new_from_lookup(&name))
                     })
                     .collect::<Vec<_>>()
             } else {
@@ -279,7 +248,7 @@ pub fn install_modules(
 
     let install_errors: Vec<_> = modules
         .into_iter()
-        .map(|m| install_module_check(ctx, &kmod_ctx, &m, &visited))
+        .map(|m| install_module(ctx, &kmod_ctx, &m, &visited, true))
         .filter(ChainResult::is_err)
         .map(ChainResult::unwrap_err)
         .collect();
@@ -298,12 +267,12 @@ pub fn install_modules(
 
 derive_str_cherr!(InstallModuleError);
 
-fn check_module_name_path_symbols(ctx: &RunContext, module: &kmod::Module, path: &str) -> bool {
-    let name = module.name();
-
-    if let Some(ref r) = ctx.mod_filter_noname {
-        if r.is_match(name.as_bytes()) {
-            return false;
+fn filter_module_name_path_symbols(ctx: &RunContext, module: &kmod::Module, path: &OsStr) -> bool {
+    if let Some(name) = module.name() {
+        if let Some(ref r) = ctx.mod_filter_noname {
+            if r.is_match(name.as_bytes()) {
+                return false;
+            }
         }
     }
 
@@ -327,8 +296,8 @@ fn check_module_name_path_symbols(ctx: &RunContext, module: &kmod::Module, path:
         Err(e) => {
             slog::warn!(
                 ctx.logger,
-                "Error getting dependency symbols for {}: {}",
-                name,
+                "Error getting dependency symbols for {:?}: {}",
+                path,
                 e
             );
             return true;
@@ -353,13 +322,18 @@ fn check_module_name_path_symbols(ctx: &RunContext, module: &kmod::Module, path:
     false
 }
 
-fn install_module_check(
+fn install_module(
     ctx: &RunContext,
     kmod_ctx: &kmod::Context,
     module: &kmod::Module,
     visited: &RwLock<HashSet<OsString>>,
+    filter: bool,
 ) -> ChainResult<(), InstallModuleError> {
-    debug!(ctx.logger, "handling module <{}>", module.name());
+    debug!(
+        ctx.logger,
+        "handling module <{:?}>",
+        module.name().unwrap_or_default()
+    );
 
     let path = match module.path() {
         Some(p) => p,
@@ -371,71 +345,35 @@ fn install_module_check(
         }
     };
 
-    if !check_module_name_path_symbols(ctx, module, &path) {
-        debug!(ctx.logger, "No name or symbol or path match for '{}'", path);
+    if filter && !filter_module_name_path_symbols(ctx, module, &path) {
+        debug!(
+            ctx.logger,
+            "No name or symbol or path match for '{:?}'", path
+        );
         return Ok(());
     }
 
     if visited.write().unwrap().insert(path.into()) {
         for m in module.dependencies() {
-            install_module_nocheck(ctx, kmod_ctx, &m, visited)?;
+            install_module(ctx, kmod_ctx, &m, visited, false)?;
         }
 
         if let Ok((pre, _post)) = module.soft_dependencies() {
             for pre_mod in pre {
-                let name = pre_mod.name();
+                let name = pre_mod.name().ok_or_else(|| {
+                    strerr!(InstallModuleError, "Failed to get name for {:?}", pre_mod)
+                })?;
                 let it = kmod_ctx
                     .module_new_from_lookup(&OsString::from(&name))
-                    .map_err(mstrerr!(InstallModuleError, "Failed lookup for {}", name))?;
+                    .map_err(mstrerr!(InstallModuleError, "Failed lookup for {:?}", name))?;
                 for m in it {
-                    debug!(ctx.logger, "pre <{}>", m.name());
-                    install_module_nocheck(ctx, kmod_ctx, &m, visited)?;
+                    debug!(ctx.logger, "pre <{:?}>", m.path());
+                    install_module(ctx, kmod_ctx, &m, visited, false)?;
                 }
             }
         }
     } else {
-        debug!(ctx.logger, "cache hit <{}>", module.name());
-    }
-    Ok(())
-}
-
-fn install_module_nocheck(
-    ctx: &RunContext,
-    kmod_ctx: &kmod::Context,
-    module: &kmod::Module,
-    visited: &RwLock<HashSet<OsString>>,
-) -> ChainResult<(), InstallModuleError> {
-    debug!(ctx.logger, "handling module <{}>", module.name());
-
-    let path = match module.path() {
-        Some(p) => p,
-        None => {
-            // FIXME: Error or not?
-            //use slog::warn;
-            //warn!(ctx.logger, "No path for module `{}´", module.name());
-            return Ok(());
-        }
-    };
-
-    if visited.write().unwrap().insert(path.into()) {
-        for m in module.dependencies() {
-            install_module_check(ctx, kmod_ctx, &m, visited)?;
-        }
-
-        if let Ok((pre, _post)) = module.soft_dependencies() {
-            for pre_mod in pre {
-                let name = pre_mod.name();
-                let it = kmod_ctx
-                    .module_new_from_lookup(&OsString::from(&name))
-                    .map_err(mstrerr!(InstallModuleError, "Failed lookup for {}", name))?;
-                for m in it {
-                    debug!(ctx.logger, "pre <{}>", m.name());
-                    install_module_check(ctx, kmod_ctx, &m, visited)?;
-                }
-            }
-        }
-    } else {
-        debug!(ctx.logger, "cache hit <{}>", module.name());
+        debug!(ctx.logger, "cache hit <{:?}>", module.name());
     }
     Ok(())
 }

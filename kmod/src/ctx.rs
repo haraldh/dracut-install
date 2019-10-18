@@ -3,10 +3,11 @@ use std::hint::unreachable_unchecked;
 use std::{fmt, ptr};
 
 use errno;
-
-use errors::{ErrorKind, Result};
 use kmod_sys;
-use modules::{Module, ModuleIterator};
+use log::trace;
+
+use crate::errors::{ErrorKind, Result};
+use crate::modules::{Module, ModuleIterator};
 
 /// The kmod context
 ///
@@ -20,7 +21,7 @@ pub struct Context {
 impl Drop for Context {
     fn drop(&mut self) {
         trace!("dropping kmod: {:?}", self.ctx);
-        unsafe { kmod_sys::kmod_unref(self.ctx) };
+        let _ = unsafe { kmod_sys::kmod_unref(self.ctx) };
     }
 }
 
@@ -123,6 +124,17 @@ impl Context {
         }
     }
 
+    /// Create a module struct by looking up a name or alias.
+    ///
+    /// ```
+    /// # fn main() { foo(); }
+    /// # fn foo() -> Result<(), Box<std::error::Error>> {
+    /// use std::ffi::{OsStr, OsString};
+    /// let ctx = kmod::Context::new()?;
+    /// let module = ctx.module_new_from_lookup(&OsString::from("vfat"))?;
+    /// # Ok(())
+    /// # }
+    /// ```
     #[inline]
     pub fn module_new_from_lookup(&self, alias: &OsStr) -> Result<ModuleIterator> {
         use std::os::unix::ffi::OsStrExt;
@@ -142,8 +154,12 @@ impl Context {
     /// Create a module struct by path.
     ///
     /// ```
-    /// let ctx = kmod::Context::new().unwrap();
-    /// let module = ctx.module_new_from_path("foo.ko");
+    /// # fn main() { foo(); }
+    /// # fn foo() -> Result<(), Box<std::error::Error>> {
+    /// let ctx = kmod::Context::new()?;
+    /// let module = ctx.module_new_from_path("foo.ko")?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[inline]
     pub fn module_new_from_path(&self, filename: &str) -> Result<Module> {
@@ -199,7 +215,7 @@ impl Context {
 }
 
 impl fmt::Debug for Context {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad("Context { .. }")
     }
 }

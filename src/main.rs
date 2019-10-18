@@ -2,10 +2,10 @@ use std::borrow::Borrow;
 use std::env;
 use std::ffi::{CStr, OsStr, OsString};
 use std::fs::OpenOptions;
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::prelude::*;
 use std::path::PathBuf;
 
-use bstr::{BStr, BString};
+use bstr::BString;
 use clap::{App, Arg};
 use regex::bytes::Regex;
 use slog::*;
@@ -301,8 +301,7 @@ fn main() {
             .map(OsStr::as_bytes)
             .map(BString::from)
             .map(|s| {
-                s.split(b":")
-                    .map(BStr::as_bytes)
+                s.split(|b| *b == b':')
                     .map(OsStr::from_bytes)
                     .map(OsString::from)
                     .collect::<Vec<_>>()
@@ -314,8 +313,7 @@ fn main() {
             .map(OsStr::as_bytes)
             .map(BString::from)
             .map(|s| {
-                s.split(b":")
-                    .map(BStr::as_bytes)
+                s.split(|b| *b == b':')
                     .map(OsStr::from_bytes)
                     .map(OsString::from)
                     .collect::<Vec<_>>()
@@ -393,7 +391,7 @@ fn do_main(ctx: &mut RunContext, args: &[OsString]) -> Result<()> {
 
     if ctx.modalias {
         for m in modalias_list()? {
-            println!("{}", m);
+            println!("{:?}", m);
         }
         return Ok(());
     }

@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::fs::File;
 use std::io;
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
