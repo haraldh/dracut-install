@@ -10,7 +10,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
-    - name: install libkmod-dev
+    - name: install libkmod-dev iputils-ping
       run: sudo apt-get install libkmod-dev
 
     - name: Build

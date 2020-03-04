@@ -547,7 +547,7 @@ mod test {
     fn test_copy_null() {
         use super::copy;
 
-        copy(&PathBuf::from("/usr/bin/ping"), &PathBuf::from("/dev/null"))
+        copy(&PathBuf::from("/bin/ping"), &PathBuf::from("/dev/null"))
             .map_err(|e| panic!("\n{:?}\n", e))
             .unwrap();
     }
@@ -557,7 +557,7 @@ mod test {
         use super::copy;
         let tmp_dir = TempDir::new_in("/tmp").unwrap();
         let dst = tmp_dir.path().join("ping");
-        copy(&PathBuf::from("/usr/bin/ping"), &dst)
+        copy(&PathBuf::from("/bin/ping"), &dst)
             .map_err(|e| panic!("\n{:?}\n", e))
             .unwrap();
     }
@@ -570,7 +570,7 @@ mod test {
         let dst = tmp_dir.path().join("ping");
         let dst2 = tmp_dir.path().join("ping2");
 
-        copy(&PathBuf::from("/usr/bin/ping"), &dst)
+        copy(&PathBuf::from("/bin/ping"), &dst)
             .map_err(|e| panic!("\n{:?}\n", e))
             .unwrap();
 
