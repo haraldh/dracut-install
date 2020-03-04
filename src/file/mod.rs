@@ -125,7 +125,10 @@ pub fn ln_r(source: &Path, target: &Path) -> ChainResult<(), String> {
     Ok(())
 }
 
-pub fn clone_path(source: &Path, root_dir: &Path) -> ChainResult<(), Box<dyn std::error::Error>> {
+pub fn clone_path(
+    source: &Path,
+    root_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error + 'static + Send + Sync>> {
     use os::unix::fs::DirBuilderExt;
     use std::fs::DirBuilder;
 
@@ -149,7 +152,9 @@ pub fn clone_path(source: &Path, root_dir: &Path) -> ChainResult<(), Box<dyn std
         _ => return Ok(()),
     }
 
-    let source_metadata = source.symlink_metadata().map_err(minto_cherr!())?;
+    let source_metadata = source
+        .symlink_metadata()
+        .map_err(mstrerr!("Failed to get symlink metadata"))?;
     let source_perms = source_metadata.permissions();
     let target_parent = target.parent();
     let target_parent_perms = target_parent
@@ -160,11 +165,13 @@ pub fn clone_path(source: &Path, root_dir: &Path) -> ChainResult<(), Box<dyn std
     if let (Some(target_parent), Some(ref tp)) = (target_parent, &target_parent_perms) {
         let mut tp = tp.clone();
         tp.set_readonly(false);
-        std::fs::set_permissions(target_parent, tp).map_err(minto_cherr!())?;
+        std::fs::set_permissions(target_parent, tp)
+            .map_err(mstrerr!("Failed to set permissions"))?;
     }
 
     let ret = if source_metadata.file_type().is_symlink() {
-        let mut path = fs::read_link(source).map_err(minto_cherr!())?;
+        let mut path =
+            fs::read_link(source).map_err(mstrerr!("Failed to read link of {:#?}", source))?;
         if !path.has_root() {
             let mut sp = PathBuf::from(
                 source
@@ -186,24 +193,35 @@ pub fn clone_path(source: &Path, root_dir: &Path) -> ChainResult<(), Box<dyn std
         }
         eprintln!("ln_r symlink {:?} {:?}", target_path, target);
 
-        ln_r(&target_path, &target).map_err(minto_cherr!())
+        ln_r(&target_path, &target).map_err(mstrerr!(
+            "failed ln_r symlink {:?} {:?}",
+            target_path,
+            target
+        ))
     } else if source.is_dir() {
         eprintln!("clone_path mkdir {:?} {:?}", source, target);
         let mut builder = DirBuilder::new();
         builder.mode(source_perms.mode());
-        builder.create(&target).map_err(minto_cherr!())
+        builder
+            .create(&target)
+            .map_err(mstrerr!("clone_path mkdir {:?} {:?}", source, target))
     } else if source.is_file() {
         eprintln!("clone_path copy {:?} {:?}", source, target);
-        copy(source, &target).map(|_| ()).map_err(minto_cherr!())
+        copy(source, &target).map(|_| ()).map_err(mstrerr!(
+            "clone_path copy {:?} {:?}",
+            source,
+            target
+        ))
     } else {
         unimplemented!()
     };
 
     if let (Some(target_parent), Some(ref tp)) = (target_parent, &target_parent_perms) {
-        std::fs::set_permissions(target_parent, tp.clone()).map_err(minto_cherr!())?;
+        std::fs::set_permissions(target_parent, tp.clone()).map_err(mstrerr!("set_permissions"))?;
     }
 
-    ret
+    ret?;
+    Ok(())
 }
 
 pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
@@ -237,10 +255,10 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
         )
     }
 
-    let mut reader = File::open(from).map_err(minto_cherr!())?;
+    let mut reader = File::open(from).map_err(|e| cherr!(e))?;
 
     let (perms, len) = {
-        let metadata = reader.metadata().map_err(minto_cherr!())?;
+        let metadata = reader.metadata().map_err(|e| cherr!(e))?;
         if !metadata.is_file() {
             return Err(cherr!(Error::new(
                 ErrorKind::InvalidInput,
@@ -258,28 +276,28 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
         .create(true)
         .truncate(true)
         .open(to)
-        .map_err(minto_cherr!())?;
+        .map_err(|e| cherr!(e))?;
 
     let mut can_handle_sparse = true;
 
     let fd_in = reader.as_raw_fd();
     let fd_out = writer.as_raw_fd();
 
-    let writer_metadata = writer.metadata().map_err(minto_cherr!())?;
+    let writer_metadata = writer.metadata().map_err(|e| cherr!(e))?;
     // prevent root from setting permissions on e.g. `/dev/null`
     // prevent users from setting permissions on e.g. `/dev/stdout` or a named pipe
     if writer_metadata.is_file() {
-        writer.set_permissions(perms).map_err(minto_cherr!())?;
+        writer.set_permissions(perms).map_err(|e| cherr!(e))?;
 
         let ignore_eperm = unsafe { libc::geteuid() != 0 };
 
-        let stat = file_attr(reader.as_raw_fd()).map_err(minto_cherr!())?;
+        let stat = file_attr(reader.as_raw_fd()).map_err(|e| cherr!(e))?;
 
         cvt_ignore_perm(
             unsafe { libc::fchown(writer.as_raw_fd(), stat.st_uid, stat.st_gid) },
             ignore_eperm,
         )
-        .map_err(minto_cherr!())?;
+        .map_err(|e| cherr!(e))?;
 
         acl_copy_fd(reader.as_raw_fd(), writer.as_raw_fd(), ignore_eperm)?;
 
@@ -333,9 +351,9 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
         if srcpos != 0 {
             if can_handle_sparse {
                 next_beg = cvt(unsafe { lseek64(fd_in, srcpos, libc::SEEK_DATA) })
-                    .map_err(minto_cherr!())?;
+                    .map_err(|e| cherr!(e))?;
                 next_end = cvt(unsafe { lseek64(fd_in, next_beg, libc::SEEK_HOLE) })
-                    .map_err(minto_cherr!())?;
+                    .map_err(|e| cherr!(e))?;
 
                 next_len = next_end - next_beg;
             } else {
@@ -382,8 +400,7 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
             }
         } else if use_sendfile {
             if can_handle_sparse && next_beg != 0 {
-                cvt(unsafe { lseek64(fd_out, next_beg, libc::SEEK_SET) })
-                    .map_err(minto_cherr!())?;
+                cvt(unsafe { lseek64(fd_out, next_beg, libc::SEEK_SET) }).map_err(|e| cherr!(e))?;
             }
             match cvt(unsafe { libc::sendfile(fd_out, fd_in, &mut next_beg, next_len as usize) }) {
                 Ok(n) => n,
@@ -408,10 +425,10 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
             }
         } else {
             if can_handle_sparse {
-                cvt(unsafe { lseek64(fd_in, next_beg, libc::SEEK_SET) }).map_err(minto_cherr!())?;
+                cvt(unsafe { lseek64(fd_in, next_beg, libc::SEEK_SET) }).map_err(|e| cherr!(e))?;
                 if next_beg != 0 {
                     cvt(unsafe { lseek64(fd_out, next_beg, libc::SEEK_SET) })
-                        .map_err(minto_cherr!())?;
+                        .map_err(|e| cherr!(e))?;
                 }
             }
             //const DEFAULT_BUF_SIZE: usize = ::sys_common::io::DEFAULT_BUF_SIZE;
@@ -434,7 +451,7 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
                     Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
                     Err(err) => return Err(cherr!(err)),
                 };
-                writer.write_all(&buf[..len]).map_err(minto_cherr!())?;
+                writer.write_all(&buf[..len]).map_err(|e| cherr!(e))?;
                 written += len as i64;
                 next_len -= len as i64;
             }

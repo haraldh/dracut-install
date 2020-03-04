@@ -140,7 +140,7 @@ pub fn ldd(files: &[OsString], report_error: bool, dest_path: &PathBuf) -> Vec<O
 pub fn install_files_ldd(
     ctx: &mut RunContext,
     files: &[OsString],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + 'static + Send + Sync>> {
     debug!(ctx.logger, "Path = {:#?}", ctx.pathdirs);
     debug!(ctx.logger, "FirmwareDirs = {:#?}", ctx.firmwaredirs);
     debug!(ctx.logger, "KernelDir = {:#?}", ctx.kerneldir);
@@ -153,7 +153,7 @@ pub fn install_files_ldd(
 pub fn install_files(
     ctx: &mut RunContext,
     files: &[OsString],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + 'static + Send + Sync>> {
     for i in files {
         clone_path(&PathBuf::from(i), &ctx.destrootdir)?;
     }
@@ -165,10 +165,11 @@ pub fn install_files(
 pub fn install_modules(
     ctx: &mut RunContext,
     module_args: &[OsString],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + 'static + Send + Sync>> {
     let visited = RwLock::new(HashSet::<OsString>::new());
 
-    let kmod_ctx = kmod::Context::new_with(ctx.kerneldir.as_ref().map(OsString::as_os_str), None)?;
+    let kmod_ctx = kmod::Context::new_with(ctx.kerneldir.as_ref().map(OsString::as_os_str), None)
+        .map_err(|e| cherr!(e))?;
 
     let (module_iterators, errors): (Vec<_>, Vec<_>) = module_args
         .iter()

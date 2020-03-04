@@ -8,7 +8,8 @@ use hashbrown::HashSet;
 
 use walkdir::WalkDir;
 
-pub fn modalias_list() -> Result<HashSet<OsString>, Box<dyn std::error::Error>> {
+pub fn modalias_list(
+) -> Result<HashSet<OsString>, Box<dyn std::error::Error + 'static + Send + Sync>> {
     let mut modules: HashSet<OsString> = HashSet::new();
 
     let kmod_ctx = kmod::Context::new()?;

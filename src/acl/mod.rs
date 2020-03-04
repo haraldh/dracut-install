@@ -13,7 +13,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
                 let err = io::Error::last_os_error();
                 return match err.raw_os_error() {
                     Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
-                    _ => Err(into_cherr!(err)),
+                    _ => Err(cherr!(err)),
                 };
             }
             t if t > 0 => t,
@@ -27,7 +27,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
                 let err = io::Error::last_os_error();
                 return match err.raw_os_error() {
                     Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
-                    _ => Err(into_cherr!(err)),
+                    _ => Err(cherr!(err)),
                 };
             }
             t => names.set_len(t as usize),
@@ -42,7 +42,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
                 let err = io::Error::last_os_error();
                 return match err.raw_os_error() {
                     Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
-                    _ => Err(into_cherr!(err)),
+                    _ => Err(cherr!(err)),
                 };
             }
             let mut buffer = Vec::with_capacity(num_bytes as usize);
@@ -56,7 +56,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
                     let err = io::Error::last_os_error();
                     return match err.raw_os_error() {
                         Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
-                        _ => Err(into_cherr!(err)),
+                        _ => Err(cherr!(err)),
                     };
                 }
                 ret => buffer.set_len(ret as usize),
@@ -74,11 +74,11 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
                 match io_err.raw_os_error() {
                     Some(libc::EPERM) => {
                         if !ignore_eperm {
-                            return Err(into_cherr!(io_err));
+                            return Err(cherr!(io_err));
                         }
                     }
                     Some(libc::EOPNOTSUPP) => {}
-                    _ => return Err(into_cherr!(io_err)),
+                    _ => return Err(cherr!(io_err)),
                 }
             }
         }

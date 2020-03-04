@@ -2,7 +2,7 @@
 //!
 //! # Example
 //! ```
-//! fn main() -> Result<(), Box<std::error::Error>>{
+//! fn main() -> Result<(), Box<dyn std::error::Error>>{
 //!     // create a new kmod context
 //!     let ctx = kmod::Context::new()?;
 //!
@@ -47,21 +47,31 @@ pub use errors::{Error, ErrorKind, Result};
 pub use modules::*;
 
 mod errors {
+
     use std;
 
     use errno::Errno;
 
-    use error_chain::error_chain;
+    use chainerror::*;
 
-    error_chain! {
-        errors {
-            Errno(err: Errno) {
-                description("got error")
-                display("{}", err)
+    #[derive(Debug, Clone)]
+    pub enum ErrorKind {
+        Generic(&'static str),
+        Errno(Errno),
+        NulError,
+    }
+
+    derive_err_kind!(Error, ErrorKind);
+
+    pub type Result<T> = std::result::Result<T, Error>;
+
+    impl std::fmt::Display for ErrorKind {
+        fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                ErrorKind::Generic(s) => write!(f, "{}", s),
+                ErrorKind::Errno(e) => write!(f, "{}", e),
+                ErrorKind::NulError => write!(f, "NulError"),
             }
-        }
-        foreign_links {
-            NulError(std::ffi::NulError);
         }
     }
 }

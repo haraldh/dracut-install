@@ -19,7 +19,7 @@ use dracut_install::{install_files_ldd, install_modules, modalias_list, RunConte
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const NAME: &str = env!("CARGO_PKG_NAME");
 
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + 'static + Send + Sync>>;
 
 fn main() {
     let after_help = format!(
@@ -345,8 +345,7 @@ fn main() {
 fn do_main(ctx: &mut RunContext, args: &[OsString]) -> Result<()> {
     // Setup logging
     if let Some(dir) = &ctx.logdir {
-        let logfile_path = PathBuf::from(dir);
-        logfile_path.join(format!("{}.log", unsafe { libc::getpid() }));
+        let logfile_path = PathBuf::from(dir).join(format!("{}.log", unsafe { libc::getpid() }));
         let logfile = OpenOptions::new().append(true).open(logfile_path)?;
 
         let decorator = slog_term::PlainDecorator::new(logfile);

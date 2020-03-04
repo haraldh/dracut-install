@@ -2,6 +2,7 @@ use std::ffi::{CStr, CString, OsStr, OsString};
 use std::hint::unreachable_unchecked;
 use std::{fmt, ptr};
 
+use chainerror::*;
 use errno;
 use kmod_sys;
 use log::trace;
@@ -36,7 +37,7 @@ impl Context {
         let ctx = unsafe { kmod_sys::kmod_new(ptr::null(), ptr::null()) };
 
         if ctx.is_null() {
-            Err("kmod_new failed".into())
+            Err(ErrorKind::Generic("kmod_new failed").into())
         } else {
             trace!("creating kmod: {:?}", ctx);
             Ok(Context { ctx })
@@ -96,7 +97,7 @@ impl Context {
         };
 
         if ctx.is_null() {
-            Err("kmod_new failed".into())
+            Err(ErrorKind::Generic("kmod_new failed").into())
         } else {
             trace!("creating kmod: {:?}", ctx);
             Ok(Context { ctx })
@@ -128,7 +129,7 @@ impl Context {
     ///
     /// ```
     /// # fn main() { foo(); }
-    /// # fn foo() -> Result<(), Box<std::error::Error>> {
+    /// # fn foo() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::ffi::{OsStr, OsString};
     /// let ctx = kmod::Context::new()?;
     /// let module = ctx.module_new_from_lookup(&OsString::from("vfat"))?;
@@ -139,7 +140,7 @@ impl Context {
     pub fn module_new_from_lookup(&self, alias: &OsStr) -> Result<ModuleIterator> {
         use std::os::unix::ffi::OsStrExt;
         let mut list = ptr::null::<kmod_sys::kmod_list>() as *mut kmod_sys::kmod_list;
-        let alias = CString::new(alias.as_bytes())?;
+        let alias = CString::new(alias.as_bytes()).map_err(|e| cherr!(e, ErrorKind::NulError))?;
         let ret =
             unsafe { kmod_sys::kmod_module_new_from_lookup(self.ctx, alias.as_ptr(), &mut list) };
 
@@ -155,7 +156,7 @@ impl Context {
     ///
     /// ```
     /// # fn main() { foo(); }
-    /// # fn foo() -> Result<(), Box<std::error::Error>> {
+    /// # fn foo() -> Result<(), Box<dyn std::error::Error>> {
     /// let ctx = kmod::Context::new()?;
     /// let module = ctx.module_new_from_path("foo.ko")?;
     /// # Ok(())
@@ -165,7 +166,7 @@ impl Context {
     pub fn module_new_from_path(&self, filename: &str) -> Result<Module> {
         let mut module = ptr::null::<kmod_sys::kmod_module>() as *mut kmod_sys::kmod_module;
 
-        let filename = CString::new(filename)?;
+        let filename = CString::new(filename).map_err(|e| cherr!(e, ErrorKind::NulError))?;
         let ret = unsafe {
             kmod_sys::kmod_module_new_from_path(self.ctx, filename.as_ptr(), &mut module)
         };
@@ -187,7 +188,7 @@ impl Context {
     pub fn module_new_from_name(&self, name: &str) -> Result<Module> {
         let mut module = ptr::null::<kmod_sys::kmod_module>() as *mut kmod_sys::kmod_module;
 
-        let name = CString::new(name)?;
+        let name = CString::new(name).map_err(|e| cherr!(e, ErrorKind::NulError))?;
         let ret =
             unsafe { kmod_sys::kmod_module_new_from_name(self.ctx, name.as_ptr(), &mut module) };
 
