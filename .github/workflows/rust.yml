@@ -9,7 +9,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+
+    - name: install libkmod-dev
+      run: sudo apt-get install libkmod-dev
+
     - name: Build
       run: cargo build --verbose
+
     - name: Run tests
       run: cargo test --verbose
