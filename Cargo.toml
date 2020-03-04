@@ -12,7 +12,7 @@ num-traits = "0.2.8"
 bitflags = "1.2.1"
 itertools = "0.8.0"
 kmod = { version = "0.4", path = "./kmod" }
-chainerror = "0.4.3"
+chainerror = "0.5.0"
 libc = "0.2.65"
 rayon = "1.2.0"
 hashbrown = { version = "0.7.0", features = ["rayon"] }
