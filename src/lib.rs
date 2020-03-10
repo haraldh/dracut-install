@@ -103,11 +103,12 @@ pub fn ldd(files: &[OsString], report_error: bool, dest_path: &PathBuf) -> Vec<O
     files
         .par_iter()
         .flat_map(|path| {
-            let path: OsString = PathBuf::from(path)
+            let path = PathBuf::from(path);
+            let path = path
                 .canonicalize()
-                .unwrap()
+                .unwrap_or(path)
                 .as_os_str()
-                .into();
+                .to_os_string();
 
             if visited.write().unwrap().insert(path.clone()) {
                 let mut dest = dest.clone();
