@@ -415,4 +415,21 @@ mod tests {
             panic!("Error: {:?}", e);
         }
     }
+    #[test]
+    fn test_usr() {
+        use std::fs::read_dir;
+
+        let tmpdir = TempDir::new_in("/var/tmp").unwrap().into_path();
+
+        let files = read_dir("/usr/bin")
+            .unwrap()
+            .map(|e| OsString::from(e.unwrap().path().as_os_str()))
+            .collect::<Vec<_>>();
+        let mut res = ldd(&files, false, &tmpdir);
+        eprintln!("no. files = {}", res.len());
+        let hs: HashSet<OsString> = res.iter().cloned().collect();
+        eprintln!("no. unique files = {}", hs.len());
+        res.sort();
+        eprintln!("files = {:#?}", res);
+    }
 }
