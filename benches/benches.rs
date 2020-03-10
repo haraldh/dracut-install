@@ -12,6 +12,7 @@ use slog::*;
 use tempfile::TempDir;
 
 use dracut_install::{install_modules, ldd, RunContext};
+use hashbrown::HashSet;
 use slog_async::OverflowStrategy;
 
 #[bench]
@@ -23,7 +24,12 @@ fn bench_usr(b: &mut Bencher) {
         .map(|e| OsString::from(e.unwrap().path().as_os_str()))
         .collect::<Vec<_>>();
     b.iter(|| {
-        black_box(ldd(&files, false, &tmpdir));
+        black_box({
+            let res = ldd(&files, false, &tmpdir);
+            eprintln!("no. files = {}", res.len());
+            let hs: HashSet<OsString> = res.iter().cloned().collect();
+            eprintln!("no. unique files = {}", hs.len());
+        });
     });
 }
 
