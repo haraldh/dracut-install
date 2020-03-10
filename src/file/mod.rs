@@ -1,12 +1,12 @@
 use std::cmp;
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Error, ErrorKind};
+use std::io::{self, ErrorKind};
 use std::os::unix::fs::symlink;
 use std::os::unix::prelude::*;
 use std::path::{Path, PathBuf};
 use std::{fs, mem, os, sync};
 
-use chainerror::*;
+use chainerror::prelude::v1::*;
 use itertools::{EitherOrBoth, Itertools};
 use libc::{fstat64, ftruncate64, lseek64, stat64};
 
@@ -65,22 +65,26 @@ pub fn cvt_ignore_perm<T: IsMinusOne + From<i8>>(t: T, ignore_eperm: bool) -> io
     }
 }
 
+#[inline]
 pub fn file_attr(fd: RawFd) -> io::Result<stat64> {
     let mut stat: stat64 = unsafe { std::mem::zeroed() };
     cvt(unsafe { fstat64(fd, &mut stat) })?;
     Ok(stat)
 }
 
-pub fn canonicalize_dir(source: &Path) -> ChainResult<PathBuf, String> {
+#[inline]
+pub fn canonicalize_dir(source: PathBuf) -> ChainResult<PathBuf, String> {
     let source_filename = source
         .file_name()
-        .ok_or_else(|| strerr!("cant get filename"))?;
+        .ok_or_else(|| "file_name()")
+        .context("cant get filename".into())?;
 
     let mut source = source
         .parent()
-        .ok_or_else(|| strerr!("cant get parent"))?
+        .ok_or_else(|| "parent()")
+        .context("cant get parent".into())?
         .canonicalize()
-        .map_err(mstrerr!("Can't canonicalize"))?;
+        .context("Can't canonicalize".into())?;
 
     source.push(source_filename);
     Ok(source)
@@ -95,7 +99,8 @@ pub fn convert_abs_rel(source: &Path, target: &Path) -> ChainResult<PathBuf, Str
         .zip_longest(
             target
                 .parent()
-                .ok_or_else(|| strerr!("cant get parent"))?
+                .ok_or("parent()")
+                .context("cant get parent".into())?
                 .components(),
         )
         .filter_map(|v| match v {
@@ -121,7 +126,7 @@ pub fn convert_abs_rel(source: &Path, target: &Path) -> ChainResult<PathBuf, Str
 
 pub fn ln_r(source: &Path, target: &Path) -> ChainResult<(), String> {
     let source = convert_abs_rel(source, target)?;
-    symlink(&source, &target).map_err(mstrerr!("Can't symlink {:?} to {:?}", source, target))?;
+    symlink(&source, &target).context(format!("Can't symlink {:?} to {:?}", source, target))?;
     Ok(())
 }
 
@@ -154,7 +159,7 @@ pub fn clone_path(
 
     let source_metadata = source
         .symlink_metadata()
-        .map_err(mstrerr!("Failed to get symlink metadata"))?;
+        .context("Failed to get symlink metadata")?;
     let source_perms = source_metadata.permissions();
     let target_parent = target.parent();
     let target_parent_perms = target_parent
@@ -165,13 +170,12 @@ pub fn clone_path(
     if let (Some(target_parent), Some(ref tp)) = (target_parent, &target_parent_perms) {
         let mut tp = tp.clone();
         tp.set_readonly(false);
-        std::fs::set_permissions(target_parent, tp)
-            .map_err(mstrerr!("Failed to set permissions"))?;
+        std::fs::set_permissions(target_parent, tp).context("Failed to set permissions")?;
     }
 
     let ret = if source_metadata.file_type().is_symlink() {
         let mut path =
-            fs::read_link(source).map_err(mstrerr!("Failed to read link of {:#?}", source))?;
+            fs::read_link(source).context(format!("Failed to read link of {:#?}", source))?;
         if !path.has_root() {
             let mut sp = PathBuf::from(
                 source
@@ -193,10 +197,9 @@ pub fn clone_path(
         }
         eprintln!("ln_r symlink {:?} {:?}", target_path, target);
 
-        ln_r(&target_path, &target).map_err(mstrerr!(
+        ln_r(&target_path, &target).context(format!(
             "failed ln_r symlink {:?} {:?}",
-            target_path,
-            target
+            target_path, target
         ))
     } else if source.is_dir() {
         eprintln!("clone_path mkdir {:?} {:?}", source, target);
@@ -204,27 +207,25 @@ pub fn clone_path(
         builder.mode(source_perms.mode());
         builder
             .create(&target)
-            .map_err(mstrerr!("clone_path mkdir {:?} {:?}", source, target))
+            .context(format!("clone_path mkdir {:?} {:?}", source, target))
     } else if source.is_file() {
         eprintln!("clone_path copy {:?} {:?}", source, target);
-        copy(source, &target).map(|_| ()).map_err(mstrerr!(
-            "clone_path copy {:?} {:?}",
-            source,
-            target
-        ))
+        copy(source, &target)
+            .map(|_| ())
+            .context(format!("clone_path copy {:?} {:?}", source, target))
     } else {
         unimplemented!()
     };
 
     if let (Some(target_parent), Some(ref tp)) = (target_parent, &target_parent_perms) {
-        std::fs::set_permissions(target_parent, tp.clone()).map_err(mstrerr!("set_permissions"))?;
+        std::fs::set_permissions(target_parent, tp.clone()).context("set_permissions")?;
     }
 
     ret?;
     Ok(())
 }
 
-pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
+pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, String> {
     use fs::{File, OpenOptions};
     use io::{Read, Write};
     use sync::atomic::{AtomicBool, Ordering};
@@ -255,15 +256,15 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
         )
     }
 
-    let mut reader = File::open(from).map_err(|e| cherr!(e))?;
+    let mut reader = File::open(&from).context(format!("open {:?}", &from))?;
 
     let (perms, len) = {
-        let metadata = reader.metadata().map_err(|e| cherr!(e))?;
+        let metadata = reader
+            .metadata()
+            .context(format!("metadata of {:?}", &from))?;
         if !metadata.is_file() {
-            return Err(cherr!(Error::new(
-                ErrorKind::InvalidInput,
-                "the source path is not an existing regular file",
-            )));
+            return Err(std::io::Error::from(ErrorKind::InvalidInput))
+                .context("the source path is not an existing regular file".into());
         }
         (metadata.permissions(), metadata.len())
     };
@@ -276,28 +277,30 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
         .create(true)
         .truncate(true)
         .open(to)
-        .map_err(|e| cherr!(e))?;
+        .context(format!("open {:?}", to))?;
 
     let mut can_handle_sparse = true;
 
     let fd_in = reader.as_raw_fd();
     let fd_out = writer.as_raw_fd();
 
-    let writer_metadata = writer.metadata().map_err(|e| cherr!(e))?;
+    let writer_metadata = writer.metadata().context(format!("metadata {:?}", to))?;
     // prevent root from setting permissions on e.g. `/dev/null`
     // prevent users from setting permissions on e.g. `/dev/stdout` or a named pipe
     if writer_metadata.is_file() {
-        writer.set_permissions(perms).map_err(|e| cherr!(e))?;
+        writer
+            .set_permissions(perms.clone())
+            .context(format!("set_permissions {:?} to {:?}", to, perms))?;
 
         let ignore_eperm = unsafe { libc::geteuid() != 0 };
 
-        let stat = file_attr(reader.as_raw_fd()).map_err(|e| cherr!(e))?;
+        let stat = file_attr(reader.as_raw_fd()).context("file_attr".into())?;
 
         cvt_ignore_perm(
             unsafe { libc::fchown(writer.as_raw_fd(), stat.st_uid, stat.st_gid) },
             ignore_eperm,
         )
-        .map_err(|e| cherr!(e))?;
+        .context("libc::fchown".into())?;
 
         acl_copy_fd(reader.as_raw_fd(), writer.as_raw_fd(), ignore_eperm)?;
 
@@ -308,7 +311,7 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
                     can_handle_sparse = false;
                 }
                 _ => {
-                    return Err(cherr!(err));
+                    return Err(err).context("ftruncate64".into());
                 }
             },
         }
@@ -351,9 +354,9 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
         if srcpos != 0 {
             if can_handle_sparse {
                 next_beg = cvt(unsafe { lseek64(fd_in, srcpos, libc::SEEK_DATA) })
-                    .map_err(|e| cherr!(e))?;
+                    .context("lseek64 SEEK_DATA".into())?;
                 next_end = cvt(unsafe { lseek64(fd_in, next_beg, libc::SEEK_HOLE) })
-                    .map_err(|e| cherr!(e))?;
+                    .context("lseek64 SEEK_HOLE".into())?;
 
                 next_len = next_end - next_beg;
             } else {
@@ -394,13 +397,14 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
                         continue;
                     }
                     _ => {
-                        return Err(cherr!(err));
+                        return Err(err).context("copy_file_range".into());
                     }
                 },
             }
         } else if use_sendfile {
             if can_handle_sparse && next_beg != 0 {
-                cvt(unsafe { lseek64(fd_out, next_beg, libc::SEEK_SET) }).map_err(|e| cherr!(e))?;
+                cvt(unsafe { lseek64(fd_out, next_beg, libc::SEEK_SET) })
+                    .context("lseek64 SEEK_SET".into())?;
             }
             match cvt(unsafe { libc::sendfile(fd_out, fd_in, &mut next_beg, next_len as usize) }) {
                 Ok(n) => n,
@@ -419,16 +423,17 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
                         continue;
                     }
                     _ => {
-                        return Err(cherr!(err));
+                        return Err(err).context("sendfile".into());
                     }
                 },
             }
         } else {
             if can_handle_sparse {
-                cvt(unsafe { lseek64(fd_in, next_beg, libc::SEEK_SET) }).map_err(|e| cherr!(e))?;
+                cvt(unsafe { lseek64(fd_in, next_beg, libc::SEEK_SET) })
+                    .context("lseek64 SEEK_SET".into())?;
                 if next_beg != 0 {
                     cvt(unsafe { lseek64(fd_out, next_beg, libc::SEEK_SET) })
-                        .map_err(|e| cherr!(e))?;
+                        .context("lseek64 SEEK_SET".into())?;
                 }
             }
             //const DEFAULT_BUF_SIZE: usize = ::sys_common::io::DEFAULT_BUF_SIZE;
@@ -449,9 +454,9 @@ pub fn copy(from: &Path, to: &Path) -> ChainResult<u64, io::Error> {
                     }
                     Ok(len) => len,
                     Err(ref err) if err.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(err) => return Err(cherr!(err)),
+                    Err(err) => return Err(err).context("read".into()),
                 };
-                writer.write_all(&buf[..len]).map_err(|e| cherr!(e))?;
+                writer.write_all(&buf[..len]).context("write_all".into())?;
                 written += len as i64;
                 next_len -= len as i64;
             }
@@ -488,7 +493,7 @@ mod test {
 
         assert_eq!(
             convert_abs_rel(
-                &canonicalize_dir(&libc_so_6).unwrap(),
+                &canonicalize_dir(libc_so_6).unwrap(),
                 &libexec.join("libc.so"),
             )
             .unwrap(),

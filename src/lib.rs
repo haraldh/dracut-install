@@ -14,14 +14,15 @@ use rayon::prelude::*;
 use slog::{debug, o, Level, Logger};
 use walkdir::WalkDir;
 
-use chainerror::*;
+use chainerror::prelude::v1::*;
 
 use regex::bytes::Regex;
 
 use crate::elfkit::ld_so_cache::LDSOCache;
 use crate::elfkit::ldd::Ldd;
-use crate::file::clone_path;
+use crate::file::{canonicalize_dir, clone_path};
 pub use crate::modules::modalias_list;
+use dynqueue::IntoDynQueue;
 
 mod acl;
 mod cstrviter;
@@ -87,35 +88,45 @@ impl Default for RunContext {
 }
 
 pub fn ldd(files: &[OsString], report_error: bool, dest_path: &PathBuf) -> Vec<OsString> {
-    let mut str_table = Vec::<u8>::new();
     let sysroot = OsStr::new("/");
-    let cache = LDSOCache::read_ld_so_cache(sysroot, &mut str_table).ok();
+    let cache = LDSOCache::read_ld_so_cache(sysroot).ok();
 
     let standard_libdirs = vec![OsString::from("/lib64/dyninst"), OsString::from("/lib64")];
     let visited = RwLock::new(HashSet::<OsString>::new());
     let ldd = Ldd::new(cache.as_ref(), &standard_libdirs, dest_path);
     let mut _buf = Vec::<u8>::new();
 
-    let lpaths = HashSet::new();
+    //let lpaths = HashSet::new();
 
     let dest = OsString::from(dest_path.as_os_str());
 
-    files
-        .par_iter()
-        .flat_map(|path| {
-            let path = PathBuf::from(path);
-            let path = path
-                .canonicalize()
-                .unwrap_or(path)
-                .as_os_str()
-                .to_os_string();
+    let filequeue = Vec::from(
+        files
+            .to_vec()
+            .drain(..)
+            .map(|path| {
+                canonicalize_dir(PathBuf::from(path))
+                    .unwrap()
+                    .as_os_str()
+                    .to_os_string()
+            })
+            .map(|path| {
+                visited.write().unwrap().insert(path.clone());
+                (path, HashSet::new())
+            })
+            .collect::<Vec<_>>(),
+    )
+    .into_dyn_queue();
 
-            if visited.write().unwrap().insert(path.clone()) {
-                let mut dest = dest.clone();
-                dest.push(path.as_os_str());
-                let dest = PathBuf::from(dest);
-                if !dest.exists() {
-                    let mut deps = ldd.recurse(&path, &lpaths, &visited).unwrap_or_else(|e| {
+    filequeue
+        .into_par_iter()
+        .filter_map(|(handle, (path, lpaths))| {
+            let mut dest = dest.clone();
+            dest.push(path.as_os_str());
+            let dest = PathBuf::from(dest);
+            if !dest.exists() {
+                ldd.recurse(handle, &path, &lpaths, &visited)
+                    .unwrap_or_else(|e| {
                         if report_error {
                             let stderr = io::stderr();
                             let mut stderr = stderr.lock();
@@ -124,15 +135,10 @@ pub fn ldd(files: &[OsString], report_error: bool, dest_path: &PathBuf) -> Vec<O
                             let _ = stderr.write_all(e.to_string().as_bytes());
                             let _ = stderr.write_all(b"\n");
                         }
-                        vec![]
                     });
-                    deps.push(path);
-                    deps
-                } else {
-                    vec![]
-                }
+                Some(path)
             } else {
-                vec![]
+                None
             }
         })
         .collect::<Vec<_>>()
@@ -170,7 +176,7 @@ pub fn install_modules(
     let visited = RwLock::new(HashSet::<OsString>::new());
 
     let kmod_ctx = kmod::Context::new_with(ctx.kerneldir.as_ref().map(OsString::as_os_str), None)
-        .map_err(|e| cherr!(e))?;
+        .context("kmod::Context::new_with")?;
 
     let (module_iterators, errors): (Vec<_>, Vec<_>) = module_args
         .iter()
@@ -267,7 +273,7 @@ pub fn install_modules(
     install_files(ctx, &files)
 }
 
-derive_str_cherr!(InstallModuleError);
+derive_str_context!(InstallModuleError);
 
 fn filter_module_name_path_symbols(ctx: &RunContext, module: &kmod::Module, path: &OsStr) -> bool {
     if let Some(name) = module.name() {
@@ -362,12 +368,17 @@ fn install_module(
 
         if let Ok((pre, _post)) = module.soft_dependencies() {
             for pre_mod in pre {
-                let name = pre_mod.name().ok_or_else(|| {
-                    strerr!(InstallModuleError, "Failed to get name for {:?}", pre_mod)
-                })?;
+                let name =
+                    pre_mod
+                        .name()
+                        .ok_or_else(|| "pre_mod_error")
+                        .context(InstallModuleError(format!(
+                            "Failed to get name for {:?}",
+                            pre_mod
+                        )))?;
                 let it = kmod_ctx
                     .module_new_from_lookup(&OsString::from(&name))
-                    .map_err(mstrerr!(InstallModuleError, "Failed lookup for {:?}", name))?;
+                    .context(InstallModuleError(format!("Failed lookup for {:?}", name)))?;
                 for m in it {
                     debug!(ctx.logger, "pre <{:?}>", m.path());
                     install_module(ctx, kmod_ctx, &m, visited, false)?;
@@ -426,6 +437,26 @@ mod tests {
             .unwrap()
             .map(|e| OsString::from(e.unwrap().path().as_os_str()))
             .collect::<Vec<_>>();
+        let mut res = ldd(&files, false, &tmpdir);
+        eprintln!("no. files = {}", res.len());
+        let hs: HashSet<OsString> = res.iter().cloned().collect();
+        eprintln!("no. unique files = {}", hs.len());
+        res.sort();
+        eprintln!("files = {:#?}", res);
+    }
+
+    #[test]
+    fn test_libe() {
+        let tmpdir = TempDir::new_in("/var/tmp").unwrap().into_path();
+        /*
+                let files = read_dir("/usr/bin")
+                    .unwrap()
+                    .map(|e| OsString::from(e.unwrap().path().as_os_str()))
+                    .collect::<Vec<_>>();
+        */
+        let mut files = Vec::<OsString>::new();
+        files.push(OsString::from("/usr/lib64/epiphany/libephymain.so"));
+
         let mut res = ldd(&files, false, &tmpdir);
         eprintln!("no. files = {}", res.len());
         let hs: HashSet<OsString> = res.iter().cloned().collect();

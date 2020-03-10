@@ -1,6 +1,6 @@
 use super::dl_cache::*;
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::os::unix::prelude::*;
@@ -8,10 +8,10 @@ use std::path::PathBuf;
 
 use crate::readstruct::*;
 
-pub struct LDSOCache<'a>(BTreeMap<&'a OsStr, Vec<&'a OsStr>>);
+pub struct LDSOCache(BTreeMap<OsString, Vec<OsString>>);
 
-impl<'a> std::ops::Deref for LDSOCache<'a> {
-    type Target = BTreeMap<&'a OsStr, Vec<&'a OsStr>>;
+impl std::ops::Deref for LDSOCache {
+    type Target = BTreeMap<OsString, Vec<OsString>>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -23,11 +23,8 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-impl<'a> LDSOCache<'a> {
-    pub fn read_ld_so_cache<'b: 'a>(
-        sysroot: &'b OsStr,
-        mut string_table: &'b mut Vec<u8>,
-    ) -> io::Result<LDSOCache<'a>> {
+impl LDSOCache {
+    pub fn read_ld_so_cache(sysroot: &OsStr) -> io::Result<LDSOCache> {
         let path = PathBuf::from(sysroot).join("etc/ld.so.cache");
         let mut file = File::open(path)?;
         let mut buf = Vec::<u8>::new();
@@ -85,6 +82,7 @@ impl<'a> LDSOCache<'a> {
         ))? as usize
             - offset;
 
+        let mut string_table = Vec::<u8>::new();
         buf.read_to_end(&mut string_table)?;
 
         buf.seek(SeekFrom::Start(entries_pos as u64))?;
@@ -98,18 +96,20 @@ impl<'a> LDSOCache<'a> {
                 file_entry.value = file_entry.value.swap_bytes();
             }
 
-            let key = OsStr::from_bytes(
+            let key: OsString = OsStr::from_bytes(
                 string_table[(file_entry.key as usize - offset) as usize..]
                     .split(|b| *b == 0u8)
                     .next()
                     .unwrap(),
-            );
-            let val = OsStr::from_bytes(
+            )
+            .into();
+            let val: OsString = OsStr::from_bytes(
                 string_table[(file_entry.value as usize - offset) as usize..]
                     .split(|b| *b == 0u8)
                     .next()
                     .unwrap(),
-            );
+            )
+            .into();
             cache.0.entry(key).or_insert_with(Vec::new).push(val);
             //eprintln!("{:?} => {:?}", key, val);
         }

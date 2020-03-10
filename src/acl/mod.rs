@@ -1,4 +1,4 @@
-use chainerror::*;
+use chainerror::prelude::v1::*;
 use libc::{fgetxattr, flistxattr, fsetxattr};
 use std::io;
 use std::os::unix::io::RawFd;
@@ -6,14 +6,14 @@ use std::ptr;
 
 use crate::cstrviter::CStrVIterator;
 
-pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResult<(), io::Error> {
+pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResult<(), String> {
     let num_bytes = unsafe {
         match flistxattr(fd_in, ptr::null_mut(), 0) {
             t if t < 0 => {
                 let err = io::Error::last_os_error();
                 return match err.raw_os_error() {
                     Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
-                    _ => Err(cherr!(err)),
+                    _ => Err(err).context("acl_copy_fd num_bytes".into()),
                 };
             }
             t if t > 0 => t,
@@ -27,7 +27,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
                 let err = io::Error::last_os_error();
                 return match err.raw_os_error() {
                     Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
-                    _ => Err(cherr!(err)),
+                    _ => Err(err).context("acl_copy_fd names".into()),
                 };
             }
             t => names.set_len(t as usize),
@@ -42,7 +42,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
                 let err = io::Error::last_os_error();
                 return match err.raw_os_error() {
                     Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
-                    _ => Err(cherr!(err)),
+                    _ => Err(err).context("acl_copy_fd fgetxattr".into()),
                 };
             }
             let mut buffer = Vec::with_capacity(num_bytes as usize);
@@ -56,7 +56,7 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
                     let err = io::Error::last_os_error();
                     return match err.raw_os_error() {
                         Some(libc::ENODATA) | Some(libc::EOPNOTSUPP) => Ok(()),
-                        _ => Err(cherr!(err)),
+                        _ => Err(err).context("acl_copy_fd fgetxattr".into()),
                     };
                 }
                 ret => buffer.set_len(ret as usize),
@@ -74,11 +74,11 @@ pub fn acl_copy_fd(fd_in: RawFd, fd_out: RawFd, ignore_eperm: bool) -> ChainResu
                 match io_err.raw_os_error() {
                     Some(libc::EPERM) => {
                         if !ignore_eperm {
-                            return Err(cherr!(io_err));
+                            return Err(io_err).context("acl_copy_fd fsetxattr".into());
                         }
                     }
                     Some(libc::EOPNOTSUPP) => {}
-                    _ => return Err(cherr!(io_err)),
+                    _ => return Err(io_err).context("acl_copy_fd fsetxattr".into()),
                 }
             }
         }

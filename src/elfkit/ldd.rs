@@ -7,8 +7,6 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use hashbrown::HashMap;
-//use std::collections::BTreeMap;
-//use std::collections::BTreeSet;
 use hashbrown::HashSet;
 
 use crate::elfkit::{self, ld_so_cache::LDSOCache, Elf};
@@ -39,19 +37,19 @@ where
     res
 }
 
-pub struct Ldd<'a, 'b: 'a> {
-    pub ld_so_cache: Option<&'a LDSOCache<'b>>,
+pub struct Ldd<'a> {
+    pub ld_so_cache: Option<&'a LDSOCache>,
     pub default_libdir: &'a [OsString],
     pub canon_cache: RwLock<HashMap<OsString, OsString>>,
     pub dest_path: OsString,
 }
 
-impl<'a, 'b: 'a> Ldd<'a, 'b> {
+impl<'a> Ldd<'a> {
     pub fn new(
-        ld_so_cache: Option<&'a LDSOCache<'b>>,
+        ld_so_cache: Option<&'a LDSOCache>,
         slpath: &'a [OsString],
         dest_path: &PathBuf,
-    ) -> Ldd<'a, 'b> {
+    ) -> Ldd<'a> {
         Ldd {
             ld_so_cache,
             default_libdir: slpath,
@@ -61,10 +59,14 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
     }
     pub fn recurse(
         &self,
+        handle: dynqueue::DynQueueHandle<
+            (OsString, HashSet<OsString>),
+            RwLock<Vec<(OsString, HashSet<OsString>)>>,
+        >,
         path: &OsStr,
         lpaths: &HashSet<OsString>,
         visited: &RwLock<HashSet<OsString>>,
-    ) -> Result<Vec<OsString>, Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut lpaths = lpaths.clone();
         let mut f = File::open(path)?;
         let mut elf = match Elf::from_reader(&mut f) {
@@ -122,39 +124,19 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
             }
         }
 
-        let mut out: Vec<OsString> = Vec::new();
-
         'outer: for dep in deps {
             //eprintln!("Search for {:#?}", dep);
             for lpath in lpaths.iter() {
                 let joined = PathBuf::from(lpath).join(&dep);
+                let joined = self.canonicalize_dir(&joined).unwrap_or(joined);
                 //eprintln!("Checking {:#?}", joined);
 
-                let f = joined.as_os_str();
-                if visited.write().unwrap().insert(f.into()) {
+                if visited.write().unwrap().insert(joined.clone().into()) {
                     let mut dest = self.dest_path.clone();
                     dest.push(joined.as_os_str());
                     let dest = PathBuf::from(dest);
                     if joined.exists() && !dest.exists() {
-                        //eprintln!("Found {:#?}", joined);
-                        joined
-                            .parent()
-                            .ok_or_else(|| {
-                                ::std::io::Error::from(::std::io::ErrorKind::InvalidData)
-                            })
-                            .and_then(|p| self.canonicalize(p))
-                            .and_then(|v| {
-                                let v = v.join(joined.file_name().unwrap());
-                                let t = v.as_os_str();
-                                if t == f || visited.write().unwrap().insert(t.into()) {
-                                    out.push(t.into());
-                                }
-                                Ok(())
-                            })
-                            .unwrap_or_else(|_| {
-                                out.push(f.into());
-                            });
-                        out.append(&mut self.recurse(f, &lpaths, visited)?);
+                        handle.enqueue((joined.into(), lpaths.clone()));
                         continue 'outer;
                     }
                 } else {
@@ -166,31 +148,17 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
                 if let Some(vals) = ld_so_cache.get(dep.as_os_str()) {
                     for f in vals {
                         //eprintln!("LD_SO_CACHE Found {:#?}", val);
-                        if visited.write().unwrap().insert(OsString::from(f)) {
-                            let joined = PathBuf::from(f);
+                        let joined = PathBuf::from(f);
+                        let joined = self.canonicalize_dir(&joined).unwrap_or(joined);
+                        //eprintln!("Checking {:#?}", joined);
+
+                        if visited.write().unwrap().insert(joined.clone().into()) {
                             let mut dest = self.dest_path.clone();
                             dest.push(joined.as_os_str());
                             let dest = PathBuf::from(dest);
 
-                            if !dest.exists() {
-                                joined
-                                    .parent()
-                                    .ok_or_else(|| {
-                                        ::std::io::Error::from(::std::io::ErrorKind::InvalidData)
-                                    })
-                                    .and_then(|p| self.canonicalize(p))
-                                    .and_then(|v| {
-                                        let v = v.join(joined.file_name().unwrap());
-                                        let t = v.as_os_str();
-                                        if t == *f || visited.write().unwrap().insert(t.into()) {
-                                            out.push(t.into());
-                                        }
-                                        Ok(())
-                                    })
-                                    .unwrap_or_else(|_| {
-                                        out.push(f.into());
-                                    });
-                                out.append(&mut self.recurse(f, &lpaths, visited)?);
+                            if joined.exists() && !dest.exists() {
+                                handle.enqueue((joined.into(), lpaths.clone()));
                             }
                         }
                     }
@@ -200,34 +168,17 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
 
             for lpath in self.default_libdir.iter() {
                 let joined = PathBuf::from(lpath).join(&dep);
-                //eprintln!("Checking {:#?}", joined);
-                //eprintln!("Found {:#?}", joined);
+                let joined = self.canonicalize_dir(&joined).unwrap_or(joined);
 
-                let f = joined.as_os_str();
-                if visited.write().unwrap().insert(f.into()) {
+                //eprintln!("Checking {:#?}", joined);
+
+                if visited.write().unwrap().insert(joined.clone().into()) {
                     let mut dest = self.dest_path.clone();
-                    dest.push(joined.as_os_str());
+                    dest.push(&joined);
                     let dest = PathBuf::from(dest);
                     if joined.exists() && !dest.exists() {
                         //eprintln!("Standard LIBPATH Found {:#?}", joined);
-                        joined
-                            .parent()
-                            .ok_or_else(|| {
-                                ::std::io::Error::from(::std::io::ErrorKind::InvalidData)
-                            })
-                            .and_then(|p| self.canonicalize(p))
-                            .and_then(|v| {
-                                let v = v.join(joined.file_name().unwrap());
-                                let t = v.as_os_str();
-                                if t == f || visited.write().unwrap().insert(t.into()) {
-                                    out.push(t.into());
-                                }
-                                Ok(())
-                            })
-                            .unwrap_or_else(|_| {
-                                out.push(f.into());
-                            });
-                        out.append(&mut self.recurse(f, &lpaths, visited)?);
+                        handle.enqueue((joined.into(), lpaths.clone()));
                         continue 'outer;
                     }
                 } else {
@@ -238,12 +189,20 @@ impl<'a, 'b: 'a> Ldd<'a, 'b> {
             return Err(format!("unable to find dependency {:#?} in {:?}", dep, lpaths).into());
         }
         //eprintln!("{:#?}", out);
-        Ok(out)
+        Ok(())
     }
 
+    #[inline]
+    pub fn canonicalize_dir(&self, path: &Path) -> std::result::Result<PathBuf, ()> {
+        let source_filename = path.file_name().ok_or(())?;
+        let dirname = path.parent().ok_or(())?;
+        let mut canon_dirname = self.canonicalize(dirname).map_err(|_| ())?;
+        canon_dirname.push(source_filename);
+        Ok(canon_dirname)
+    }
+
+    #[inline]
     pub fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
-        //Ok(PathBuf::from(path))
-        //path.canonicalize()
         {
             if let Some(val) = self.canon_cache.read().unwrap().get(path.as_os_str()) {
                 return Ok(PathBuf::from(val));
