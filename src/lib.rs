@@ -441,26 +441,7 @@ mod tests {
         eprintln!("no. files = {}", res.len());
         let hs: HashSet<OsString> = res.iter().cloned().collect();
         eprintln!("no. unique files = {}", hs.len());
-        res.sort();
-        eprintln!("files = {:#?}", res);
-    }
-
-    #[test]
-    fn test_libe() {
-        let tmpdir = TempDir::new_in("/var/tmp").unwrap().into_path();
-        /*
-                let files = read_dir("/usr/bin")
-                    .unwrap()
-                    .map(|e| OsString::from(e.unwrap().path().as_os_str()))
-                    .collect::<Vec<_>>();
-        */
-        let mut files = Vec::<OsString>::new();
-        files.push(OsString::from("/usr/lib64/epiphany/libephymain.so"));
-
-        let mut res = ldd(&files, false, &tmpdir);
-        eprintln!("no. files = {}", res.len());
-        let hs: HashSet<OsString> = res.iter().cloned().collect();
-        eprintln!("no. unique files = {}", hs.len());
+        assert_eq!(hs.len(), res.len());
         res.sort();
         eprintln!("files = {:#?}", res);
     }
