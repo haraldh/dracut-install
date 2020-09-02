@@ -10,6 +10,10 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+
     - name: install libkmod-dev iputils-ping
       run: sudo apt-get install libkmod-dev
 
