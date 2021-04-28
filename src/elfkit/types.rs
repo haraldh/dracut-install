@@ -273,6 +273,7 @@ impl Default for SectionType {
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Primitive, PartialEq, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum Abi {
     SYSV = 0,
     HPUX = 1,
@@ -298,6 +299,7 @@ impl Default for Abi {
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Primitive, PartialEq, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum ElfType {
     NONE = 0,
     REL = 1,
@@ -314,6 +316,7 @@ impl Default for ElfType {
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Primitive, PartialEq, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum SymbolType {
     /// Symbol type is unspecified
     NOTYPE = 0,
@@ -343,6 +346,7 @@ impl Default for SymbolType {
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Primitive, PartialOrd, Eq, Ord, PartialEq, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum SymbolBind {
     /// Local symbol
     LOCAL = 0,
@@ -363,6 +367,7 @@ impl Default for SymbolBind {
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Primitive, PartialEq, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum SymbolVis {
     /// Default symbol visibility rules
     DEFAULT = 0,
@@ -382,6 +387,7 @@ impl Default for SymbolVis {
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Primitive, PartialEq, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum Machine {
     /// No machine
     NONE = 0,
@@ -749,6 +755,7 @@ impl Default for Machine {
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Primitive, PartialEq, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum SegmentType {
     /// Program header table entry unused
     NULL = 0,
@@ -796,6 +803,7 @@ impl Default for SegmentType {
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Primitive, PartialEq, Clone)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum DynamicType {
     /// Marks end of dynamic section
     NULL = 0,
