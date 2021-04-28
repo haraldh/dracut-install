@@ -128,7 +128,7 @@ impl Module {
             .reduce(|a, b| a + " " + &b)
             .unwrap_or_default();
 
-        let opts = CString::new(opts).map_err(|e| cherr!(e, ErrorKind::NulError))?;
+        let opts = CString::new(opts).map_context(|_e| ErrorKind::NulError)?;
 
         let ret = unsafe { kmod_sys::kmod_module_insert_module(self.inner, flags, opts.as_ptr()) };
         if ret < 0 {
