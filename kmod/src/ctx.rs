@@ -2,9 +2,7 @@ use std::ffi::{CStr, CString, OsStr, OsString};
 use std::hint::unreachable_unchecked;
 use std::{fmt, ptr};
 
-use chainerror::*;
-use errno;
-use kmod_sys;
+use chainerror::prelude::v1::*;
 use log::trace;
 
 use crate::errors::{ErrorKind, Result};
@@ -140,7 +138,7 @@ impl Context {
     pub fn module_new_from_lookup(&self, alias: &OsStr) -> Result<ModuleIterator> {
         use std::os::unix::ffi::OsStrExt;
         let mut list = ptr::null::<kmod_sys::kmod_list>() as *mut kmod_sys::kmod_list;
-        let alias = CString::new(alias.as_bytes()).map_err(|e| cherr!(e, ErrorKind::NulError))?;
+        let alias = CString::new(alias.as_bytes()).map_context(|_e| ErrorKind::NulError)?;
         let ret =
             unsafe { kmod_sys::kmod_module_new_from_lookup(self.ctx, alias.as_ptr(), &mut list) };
 
@@ -166,7 +164,7 @@ impl Context {
     pub fn module_new_from_path(&self, filename: &str) -> Result<Module> {
         let mut module = ptr::null::<kmod_sys::kmod_module>() as *mut kmod_sys::kmod_module;
 
-        let filename = CString::new(filename).map_err(|e| cherr!(e, ErrorKind::NulError))?;
+        let filename = CString::new(filename).map_context(|_e| ErrorKind::NulError)?;
         let ret = unsafe {
             kmod_sys::kmod_module_new_from_path(self.ctx, filename.as_ptr(), &mut module)
         };
@@ -188,7 +186,7 @@ impl Context {
     pub fn module_new_from_name(&self, name: &str) -> Result<Module> {
         let mut module = ptr::null::<kmod_sys::kmod_module>() as *mut kmod_sys::kmod_module;
 
-        let name = CString::new(name).map_err(|e| cherr!(e, ErrorKind::NulError))?;
+        let name = CString::new(name).map_context(|_e| ErrorKind::NulError)?;
         let ret =
             unsafe { kmod_sys::kmod_module_new_from_name(self.ctx, name.as_ptr(), &mut module) };
 
