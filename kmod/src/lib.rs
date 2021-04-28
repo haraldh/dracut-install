@@ -48,8 +48,6 @@ pub use modules::*;
 
 mod errors {
 
-    use std;
-
     use errno::Errno;
 
     use chainerror::*;
