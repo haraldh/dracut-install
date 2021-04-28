@@ -9,7 +9,7 @@ use std::sync::RwLock;
 use hashbrown::HashMap;
 use hashbrown::HashSet;
 
-use crate::elfkit::{self, ld_so_cache::LDSOCache, Elf};
+use crate::elfkit::{self, ld_so_cache::LdsoCache, Elf};
 
 fn replace_slice<T: Copy>(buf: &[T], from: &[T], to: &[T]) -> Vec<T>
 where
@@ -38,7 +38,7 @@ where
 }
 
 pub struct Ldd<'a> {
-    pub ld_so_cache: Option<&'a LDSOCache>,
+    pub ld_so_cache: Option<&'a LdsoCache>,
     pub default_libdir: &'a [OsString],
     pub canon_cache: RwLock<HashMap<OsString, OsString>>,
     pub dest_path: OsString,
@@ -46,7 +46,7 @@ pub struct Ldd<'a> {
 
 impl<'a> Ldd<'a> {
     pub fn new(
-        ld_so_cache: Option<&'a LDSOCache>,
+        ld_so_cache: Option<&'a LdsoCache>,
         slpath: &'a [OsString],
         dest_path: &PathBuf,
     ) -> Ldd<'a> {

@@ -18,7 +18,7 @@ use chainerror::prelude::v1::*;
 
 use regex::bytes::Regex;
 
-use crate::elfkit::ld_so_cache::LDSOCache;
+use crate::elfkit::ld_so_cache::LdsoCache;
 use crate::elfkit::ldd::Ldd;
 use crate::file::{canonicalize_dir, clone_path};
 pub use crate::modules::modalias_list;
@@ -89,7 +89,7 @@ impl Default for RunContext {
 
 pub fn ldd(files: &[OsString], report_error: bool, dest_path: &PathBuf) -> Vec<OsString> {
     let sysroot = OsStr::new("/");
-    let cache = LDSOCache::read_ld_so_cache(sysroot).ok();
+    let cache = LdsoCache::read_ld_so_cache(sysroot).ok();
 
     let standard_libdirs = vec![OsString::from("/lib64/dyninst"), OsString::from("/lib64")];
     let visited = RwLock::new(HashSet::<OsString>::new());
