@@ -5,7 +5,6 @@ use super::header::Header;
 use super::section::*;
 use super::segment::*;
 
-use std;
 use std::io::{Read, Seek, SeekFrom};
 
 #[derive(Default)]
@@ -84,7 +83,7 @@ impl Elf {
     where
         R: Read + Seek,
     {
-        let mut sec = std::mem::replace(&mut self.sections[i], Section::default());
+        let mut sec = std::mem::take(&mut self.sections[i]);
         {
             let link = sec.header.link;
             let linked = {

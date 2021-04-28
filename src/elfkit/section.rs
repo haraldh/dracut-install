@@ -26,10 +26,14 @@ impl SectionHeader {
         R: Read,
     {
         elf_dispatch_endianness!(eh => {
-            let mut r = SectionHeader::default();
-            r.name   = read_u32(io)?;
+            let name   = read_u32(io)?;
             let reb  = read_u32(io)?;
-            r.shtype = types::SectionType(reb);
+
+            let mut r = SectionHeader {
+                name,
+                shtype: types::SectionType(reb),
+                ..Default::default()
+            };
 
             elf_dispatch_uclass!(eh => {
                 let reb = read_uclass(io)?;

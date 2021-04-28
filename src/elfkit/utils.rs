@@ -1,6 +1,5 @@
 use super::types;
 use super::Header;
-use std;
 use std::io::{Read, Result};
 
 pub trait ElfEndianReadExt: Read {

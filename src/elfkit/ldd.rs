@@ -44,11 +44,17 @@ pub struct Ldd<'a> {
     pub dest_path: OsString,
 }
 
+type OsStringDynQueueHandle<'a> = dynqueue::DynQueueHandle<
+    'a,
+    (OsString, HashSet<OsString>),
+    RwLock<Vec<(OsString, HashSet<OsString>)>>,
+>;
+
 impl<'a> Ldd<'a> {
     pub fn new(
         ld_so_cache: Option<&'a LdsoCache>,
         slpath: &'a [OsString],
-        dest_path: &PathBuf,
+        dest_path: &Path,
     ) -> Ldd<'a> {
         Ldd {
             ld_so_cache,
@@ -57,12 +63,10 @@ impl<'a> Ldd<'a> {
             dest_path: OsString::from(dest_path.as_os_str()),
         }
     }
+
     pub fn recurse(
         &self,
-        handle: dynqueue::DynQueueHandle<
-            (OsString, HashSet<OsString>),
-            RwLock<Vec<(OsString, HashSet<OsString>)>>,
-        >,
+        handle: OsStringDynQueueHandle,
         path: &OsStr,
         lpaths: &HashSet<OsString>,
         visited: &RwLock<HashSet<OsString>>,
