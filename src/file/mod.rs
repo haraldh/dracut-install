@@ -76,12 +76,12 @@ pub fn file_attr(fd: RawFd) -> io::Result<stat64> {
 pub fn canonicalize_dir(source: PathBuf) -> ChainResult<PathBuf, String> {
     let source_filename = source
         .file_name()
-        .ok_or_else(|| "file_name()")
+        .ok_or("file_name()")
         .context("cant get filename".into())?;
 
     let mut source = source
         .parent()
-        .ok_or_else(|| "parent()")
+        .ok_or("parent()")
         .context("cant get parent".into())?
         .canonicalize()
         .context("Can't canonicalize".into())?;

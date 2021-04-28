@@ -10,7 +10,6 @@ use clap::{App, Arg};
 use regex::bytes::Regex;
 use slog::*;
 use slog_async::OverflowStrategy;
-use slog_term;
 
 use dracut_install::{install_files_ldd, install_modules, modalias_list, RunContext};
 
@@ -256,7 +255,8 @@ fn main() {
                 0 => Level::Warning,
                 1 => Level::Info,
                 2 => Level::Debug,
-                3 | _ => Level::Trace,
+                3 => Level::Trace,
+                _ => Level::Trace,
             }
         },
         kerneldir: matches.value_of_os("kerneldir").map(OsString::from),
