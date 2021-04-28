@@ -5,7 +5,7 @@ use std::ffi::OsString;
 use std::io;
 use std::io::Write;
 use std::os::unix::prelude::*;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use hashbrown::HashSet;
@@ -87,7 +87,7 @@ impl Default for RunContext {
     }
 }
 
-pub fn ldd(files: &[OsString], report_error: bool, dest_path: &PathBuf) -> Vec<OsString> {
+pub fn ldd(files: &[OsString], report_error: bool, dest_path: &Path) -> Vec<OsString> {
     let sysroot = OsStr::new("/");
     let cache = LdsoCache::read_ld_so_cache(sysroot).ok();
 
@@ -100,23 +100,21 @@ pub fn ldd(files: &[OsString], report_error: bool, dest_path: &PathBuf) -> Vec<O
 
     let dest = OsString::from(dest_path.as_os_str());
 
-    let filequeue = Vec::from(
-        files
-            .to_vec()
-            .drain(..)
-            .map(|path| {
-                canonicalize_dir(PathBuf::from(path))
-                    .unwrap()
-                    .as_os_str()
-                    .to_os_string()
-            })
-            .map(|path| {
-                visited.write().unwrap().insert(path.clone());
-                (path, HashSet::new())
-            })
-            .collect::<Vec<_>>(),
-    )
-    .into_dyn_queue();
+    let filequeue = files
+        .to_vec()
+        .drain(..)
+        .map(|path| {
+            canonicalize_dir(PathBuf::from(path))
+                .unwrap()
+                .as_os_str()
+                .to_os_string()
+        })
+        .map(|path| {
+            visited.write().unwrap().insert(path.clone());
+            (path, HashSet::new())
+        })
+        .collect::<Vec<_>>()
+        .into_dyn_queue();
 
     filequeue
         .into_par_iter()
@@ -175,7 +173,7 @@ pub fn install_modules(
 ) -> Result<(), Box<dyn std::error::Error + 'static + Send + Sync>> {
     let visited = RwLock::new(HashSet::<OsString>::new());
 
-    let kmod_ctx = kmod::Context::new_with(ctx.kerneldir.as_ref().map(OsString::as_os_str), None)
+    let kmod_ctx = kmod::Context::new_with(ctx.kerneldir.as_deref(), None)
         .context("kmod::Context::new_with")?;
 
     let (module_iterators, errors): (Vec<_>, Vec<_>) = module_args
@@ -186,11 +184,11 @@ pub fn install_modules(
                 let m = kmod_ctx
                     .module_new_from_path(module.to_str().unwrap())
                     .unwrap();
-                if let Some(name) = m.name() {
-                    return vec![kmod_ctx.module_new_from_lookup(&OsString::from(name))];
+                return if let Some(name) = m.name() {
+                    vec![kmod_ctx.module_new_from_lookup(&OsString::from(name))]
                 } else {
-                    return vec![Err(kmod::ErrorKind::Errno(kmod::Errno(42)).into())];
-                }
+                    vec![Err(kmod::ErrorKind::Errno(kmod::Errno(42)).into())]
+                };
             } else if module.as_bytes().starts_with(b"=") {
                 let (_, b) = module.as_bytes().split_at(1);
 
@@ -368,14 +366,13 @@ fn install_module(
 
         if let Ok((pre, _post)) = module.soft_dependencies() {
             for pre_mod in pre {
-                let name =
-                    pre_mod
-                        .name()
-                        .ok_or_else(|| "pre_mod_error")
-                        .context(InstallModuleError(format!(
-                            "Failed to get name for {:?}",
-                            pre_mod
-                        )))?;
+                let name = pre_mod
+                    .name()
+                    .ok_or("pre_mod_error")
+                    .context(InstallModuleError(format!(
+                        "Failed to get name for {:?}",
+                        pre_mod
+                    )))?;
                 let it = kmod_ctx
                     .module_new_from_lookup(&OsString::from(&name))
                     .context(InstallModuleError(format!("Failed lookup for {:?}", name)))?;
