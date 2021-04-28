@@ -3,10 +3,8 @@ use std::fmt;
 use std::os::unix::ffi::OsStrExt;
 
 use chainerror::*;
-use errno;
 use kmod_sys::{self, kmod_list, kmod_module};
 use log::trace;
-use reduce::Reduce;
 
 use crate::errors::{ErrorKind, Result};
 
@@ -123,10 +121,7 @@ impl Module {
     /// Insert the module into the kernel
     #[inline]
     pub fn insert_module(&self, flags: u32, opts: Vec<String>) -> Result<()> {
-        let opts = opts
-            .into_iter()
-            .reduce(|a, b| a + " " + &b)
-            .unwrap_or_default();
+        let opts = opts.join(" ");
 
         let opts = CString::new(opts).map_context(|_e| ErrorKind::NulError)?;
 
