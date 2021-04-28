@@ -8,9 +8,9 @@ use std::path::PathBuf;
 
 use crate::readstruct::*;
 
-pub struct LDSOCache(BTreeMap<OsString, Vec<OsString>>);
+pub struct LdsoCache(BTreeMap<OsString, Vec<OsString>>);
 
-impl std::ops::Deref for LDSOCache {
+impl std::ops::Deref for LdsoCache {
     type Target = BTreeMap<OsString, Vec<OsString>>;
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -23,8 +23,8 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-impl LDSOCache {
-    pub fn read_ld_so_cache(sysroot: &OsStr) -> io::Result<LDSOCache> {
+impl LdsoCache {
+    pub fn read_ld_so_cache(sysroot: &OsStr) -> io::Result<LdsoCache> {
         let path = PathBuf::from(sysroot).join("etc/ld.so.cache");
         let mut file = File::open(path)?;
         let mut buf = Vec::<u8>::new();
@@ -75,7 +75,7 @@ impl LDSOCache {
             false
         };
 
-        let mut cache = LDSOCache(BTreeMap::new());
+        let mut cache = LdsoCache(BTreeMap::new());
 
         let offset = buf.seek(SeekFrom::Current(
             (::std::mem::size_of::<FileEntryNew>() * cache_file_new.nlibs as usize) as i64,
