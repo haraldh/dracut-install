@@ -15,7 +15,7 @@ kmod = { version = "0.4", path = "./kmod" }
 chainerror = "0.7"
 libc = "0.2.65"
 rayon = "1.2.0"
-hashbrown = { version = "0.11.1", features = ["rayon"] }
+hashbrown = { version = "0.13.1", features = ["rayon"] }
 bstr = "1.0.1"
 slog = "2.5.2"
 slog-term = "2.4.1"
